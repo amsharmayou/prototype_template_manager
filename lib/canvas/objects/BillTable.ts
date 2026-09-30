@@ -33,6 +33,17 @@ export interface BillTableSpec {
   fontFamily: string;
 }
 
+export interface TableResizeGesture {
+  colWidths: number[];
+  rowHeights: number[];
+  width: number;
+  height: number;
+  startX: number;
+  startY: number;
+  signX: 1 | -1;
+  signY: 1 | -1;
+}
+
 export const DEFAULT_TABLE_SPEC: BillTableSpec = {
   colWidths: [120, 120],
   rowHeights: [30, 30],
@@ -96,6 +107,12 @@ export class BillTable extends FabricObject {
 
   /** Cell currently being edited, as a flat index. -1 when none. */
   editingCell = -1;
+
+  /**
+   * State captured when a resize handle is grabbed. `BillTable` keeps scale at
+   * 1, so the only record of a drag is this snapshot.
+   */
+  resizeGesture: TableResizeGesture | null = null;
 
   constructor(spec: Partial<BillTableSpec> = {}) {
     const merged = { ...DEFAULT_TABLE_SPEC, ...spec };
@@ -235,6 +252,57 @@ export class BillTable extends FabricObject {
   }
 
   /**
+   * Snapshot the grid at the moment a handle is grabbed.
+   *
+   * The sign per axis records which side of the table the pointer started on,
+   * so every handle resizes away from this object's top-left. Deriving it
+   * from the pointer position avoids depending on which control Fabric
+   * considers active.
+   */
+  beginResizeGesture(startPointer: { x: number; y: number }): void {
+    const w = totalWidth(this.colWidths);
+    const h = totalHeight(this.rowHeights);
+    const cx = (this.left ?? 0) + w / 2;
+    const cy = (this.top ?? 0) + h / 2;
+    this.resizeGesture = {
+      colWidths: [...this.colWidths],
+      rowHeights: [...this.rowHeights],
+      width: w,
+      height: h,
+      startX: startPointer.x,
+      startY: startPointer.y,
+      signX: startPointer.x >= cx ? 1 : -1,
+      signY: startPointer.y >= cy ? 1 : -1,
+    };
+  }
+
+  /**
+   * Resize columns to `targetWidth`, always scaling from the gesture snapshot.
+   *
+   * Resolving from the snapshot rather than the current sizes is what makes a
+   * drag idempotent: a long drag applies the same ratio repeatedly instead of
+   * compounding. Without an active gesture the live sizes are used, so the
+   * properties panel can call this directly.
+   */
+  resizeColumnsTo(targetWidth: number): void {
+    if (!Number.isFinite(targetWidth)) return;
+    const base = this.resizeGesture?.colWidths ?? this.colWidths;
+    this.colWidths = scaleColWidths(base, targetWidth, MIN_COL_WIDTH);
+    this.syncDimensions();
+  }
+
+  resizeRowsTo(targetHeight: number): void {
+    if (!Number.isFinite(targetHeight)) return;
+    const base = this.resizeGesture?.rowHeights ?? this.rowHeights;
+    this.rowHeights = scaleRowHeights(base, targetHeight, MIN_ROW_HEIGHT);
+    this.syncDimensions();
+  }
+
+  endResizeGesture(): void {
+    this.resizeGesture = null;
+  }
+
+  /**
    * Multiply every column width by `factor`. Used to turn a corner-drag into
    * real column geometry, so the table's top-left corner never moves.
    */
@@ -332,6 +400,7 @@ export class BillTable extends FabricObject {
     return {
       ...super.toObject(propertiesToInclude),
       type: "BillTable",
+      resizeGesture: null,
       colWidths: [...this.colWidths],
       rowHeights: [...this.rowHeights],
       cells: this.cells.map((c) => ({ ...c })),
@@ -382,6 +451,7 @@ export class BillTable extends FabricObject {
     });
 
     table.set(fabricProps as never);
+    table.resizeGesture = null;
     table.setCoords();
     return table;
   }
