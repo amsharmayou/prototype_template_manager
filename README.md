@@ -249,18 +249,21 @@ These cost real debugging time and are load-bearing for anyone extending this:
    recomputes it on every `object:scaling` as the pointer's position inside the
    transform captured at `mouse:down`, divided by the object's *current*
    transformed width — `|newPoint.x * target.scaleX / dim.x` in `scaleObject`,
-   with `dim` read live off the object. That is the axis branch the four edge
-   handles always take, and the one the corners take unless uniform scaling is
-   toggled; the uniform branch divides the same distance by that same live
-   `dim`. So an object that rewrites its own `width` mid-drag and resets
-   `scaleX` to 1 is feeding a moving denominator into a fixed-numerator ratio:
-   the number changes on every event, and re-applying it to the already-resized
-   widths compounds, which is how a drag asking for ~130 scene units could miss
-   by anywhere from ~7 to ~910. The fix is that the drag path never reads
-   `scaleX`: it derives the target size from the pointer's displacement since
-   `mouse:down` and resolves the column geometry from a snapshot taken when the
-   gesture began, so re-applying the same absolute target is a no-op rather than
-   one more multiplication.
+   with `dim` read live off the object. That is the axis branch, which the four
+   edge handles always take and the corners take only when uniform scaling is
+   toggled off with Shift. A plain corner drag takes the other branch:
+   `canvasDefaults.uniformScaling` is `true`, so `scaleIsProportional` reports
+   true unless Shift is held, and that branch likewise divides a
+   `mouse:down`-captured distance by that same live `dim`. So an object that
+   rewrites its own `width` mid-drag and resets `scaleX` to 1 is feeding a
+   moving denominator into a fixed-numerator ratio: the number changes on every
+   event, and re-applying it to the already-resized widths compounds, which is
+   how a drag asking for ~130 scene units could miss by anywhere from ~7 to
+   ~910. The fix is that the drag path never reads `scaleX`: it derives the
+   target size from the pointer's displacement since `mouse:down` and resolves
+   the column geometry from a snapshot taken when the gesture began, so
+   re-applying the same absolute target is a no-op rather than one more
+   multiplication.
 
 ---
 
