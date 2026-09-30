@@ -13,6 +13,7 @@ import {
   Point,
   Polygon,
   Rect,
+  type TPointerEvent,
   type TPointerEventInfo,
 } from "fabric";
 
@@ -152,6 +153,8 @@ export class EditorController {
   private pencil: PencilBrush | null = null;
   /** Position of the object being transformed, captured on mouse down. */
   private gestureAnchor: { left: number; top: number } | null = null;
+  /** Latest scene-space pointer position, for events that do not carry one. */
+  private lastKnownScenePoint: { x: number; y: number } | null = null;
   private isPanning = false;
   private spaceHeld = false;
   private lastPan: { x: number; y: number } | null = null;
@@ -602,6 +605,10 @@ export class EditorController {
     this.gestureAnchor = opt.target
       ? { left: opt.target.left ?? 0, top: opt.target.top ?? 0 }
       : null;
+    this.lastKnownScenePoint = { x: p.x, y: p.y };
+    if (opt.target instanceof BillTable) {
+      opt.target.beginResizeGesture({ x: p.x, y: p.y });
+    }
 
     const tool = this.state.tool;
     if (tool === "select") return;
@@ -658,6 +665,7 @@ export class EditorController {
     const canvas = this.canvas;
     if (!canvas) return;
     const p = opt.scenePoint;
+    this.lastKnownScenePoint = { x: p.x, y: p.y };
 
     if (this.drawOrigin && this.drawing) {
       const dx = p.x - this.drawOrigin.x;
@@ -985,28 +993,61 @@ export class EditorController {
     }
   };
 
-  private onObjectScaling = (opt: { target?: FabricObject }): void => {
+  /**
+   * `object:scaling` carries the raw DOM event rather than a scene point, and
+   * `lastKnownScenePoint` can lag a frame behind on a fast drag, so the event is
+   * the authority and the cached value is only a fallback.
+   */
+  private resolveScenePoint(
+    e: TPointerEvent | undefined,
+  ): { x: number; y: number } | null {
+    const canvas = this.canvas;
+    if (canvas && e) {
+      const p = canvas.getScenePoint(e);
+      if (Number.isFinite(p.x) && Number.isFinite(p.y)) {
+        this.lastKnownScenePoint = { x: p.x, y: p.y };
+        return this.lastKnownScenePoint;
+      }
+    }
+    return this.lastKnownScenePoint;
+  }
+
+  private onObjectScaling = (opt: {
+    target?: FabricObject;
+    e?: TPointerEvent;
+  }): void => {
     const target = opt.target;
     if (!target) return;
 
     const appType = (target as unknown as { appType?: string }).appType;
     if (appType === "table") {
       // A table is resized by changing its column widths, never by scaling,
-      // so that the grid stays exact. Convert the drag into real geometry and
-      // pin the top-left corner, so the table only ever grows right and down.
+      // so that the grid stays exact. The target size comes from the pointer's
+      // displacement since mouse-down, not from Fabric's scaleX: the drag's
+      // scale is computed against the size captured at gesture start, so
+      // multiplying the current widths by it compounds on every event.
       const table = target as BillTable;
-      // Read both factors first: converting one axis resets the object's
-      // scale, which would otherwise swallow the other axis.
-      const factorX = table.scaleX;
-      const factorY = table.scaleY;
-      table.scaleColumns(factorX);
-      table.scaleRows(factorY);
-      table.set({ scaleX: 1, scaleY: 1 } as never);
-      if (this.gestureAnchor) {
+      const gesture = table.resizeGesture;
+      const p = this.resolveScenePoint(opt.e);
+      if (gesture && p) {
+        // Both target sizes are read off the gesture snapshot before either
+        // axis is written, because each resize re-syncs the table's dimensions.
+        const width = gesture.width + (p.x - gesture.startX) * gesture.signX;
+        const height = gesture.height + (p.y - gesture.startY) * gesture.signY;
         table.set({
-          left: this.gestureAnchor.left,
-          top: this.gestureAnchor.top,
+          left: this.gestureAnchor?.left ?? table.left,
+          top: this.gestureAnchor?.top ?? table.top,
         } as never);
+        table.resizeColumnsTo(width);
+        table.resizeRowsTo(height);
+        table.set({ scaleX: 1, scaleY: 1 } as never);
+      } else {
+        // No gesture: fall back to the scale Fabric reports.
+        const factorX = table.scaleX;
+        const factorY = table.scaleY;
+        table.scaleColumns(factorX);
+        table.scaleRows(factorY);
+        table.set({ scaleX: 1, scaleY: 1 } as never);
       }
       table.setCoords();
       this.canvas?.requestRenderAll();
@@ -1024,7 +1065,7 @@ export class EditorController {
   };
 
   private onObjectModified = (): void => {
-    // One history entry per completed gesture.
+    this.getTable()?.endResizeGesture();
     this.commit("Transform");
   };
 
