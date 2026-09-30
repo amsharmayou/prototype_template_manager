@@ -14,6 +14,7 @@ import {
   rowLines,
   scaleColWidths,
   scaleRowHeights,
+  scaleSizesProportionally,
   sum,
   totalHeight,
   totalWidth,
@@ -185,6 +186,74 @@ describe("scaleColWidths / scaleRowHeights", () => {
   it("never produces a column below the minimum", () => {
     const out = scaleColWidths([1000, 1, 1], 40);
     expect(out.every((n) => n >= MIN_COL_WIDTH)).toBe(true);
+  });
+});
+
+describe("scaleSizesProportionally", () => {
+  it("keeps the total exact", () => {
+    expect(sum(scaleSizesProportionally([10, 10, 10], 100, 2))).toBe(100);
+    expect(sum(scaleSizesProportionally([7, 11, 13], 47, 2))).toBe(47);
+  });
+
+  it("preserves ratios rather than equalising", () => {
+    // 300:40:40 must stay 7.89:1:1, not collapse to 1:1:1.
+    const out = scaleSizesProportionally([300, 40, 40], 380, 2);
+    expect(out[0]).toBeGreaterThan(280);
+    expect(out[1]).toBeLessThan(50);
+    expect(sum(out)).toBe(380);
+  });
+
+  it("spreads the remainder across columns, not all onto the widest", () => {
+    // 1/3 each of 100 cannot divide evenly, so exactly one column must
+    // carry the extra pixel. The old implementation always picked index 0.
+    const out = scaleSizesProportionally([1, 1, 1], 100, 2);
+    const bumped = out.filter((n) => n === 34).length;
+    expect(sum(out)).toBe(100);
+    expect(bumped).toBe(1);
+  });
+
+  it("honours the minimum without losing the total", () => {
+    const out = scaleSizesProportionally([1, 1000], 20, 8);
+    expect(out[0]).toBe(8);
+    expect(out[1]).toBe(12);
+    expect(sum(out)).toBe(20);
+  });
+
+  it("is idempotent: same target twice gives the same result", () => {
+    const once = scaleSizesProportionally([120, 30, 30], 500, 2);
+    const twice = scaleSizesProportionally(once, 500, 2);
+    expect(twice).toEqual(once);
+  });
+
+  it("returns a copy for a zero total instead of dividing by zero", () => {
+    expect(scaleSizesProportionally([10, 20], 0, 2)).toEqual([10, 20]);
+  });
+});
+
+describe("normaliseSizes maxTotal clamps upward as well as downward", () => {
+  it("raises entries that sum below maxTotal", () => {
+    // The old code only ever shrank, so a too-small total was ignored.
+    const out = normaliseSizes([5, 5, 5], 2, 60);
+    expect(sum(out)).toBe(60);
+  });
+
+  it("keeps ratios when clamping upward", () => {
+    const out = normaliseSizes([10, 30], 2, 80);
+    expect(sum(out)).toBe(80);
+    expect(out[0]).toBeLessThan(out[1]!);
+    expect(out[0]! / out[1]!).toBeGreaterThan(0.2);
+    expect(out[0]! / out[1]!).toBeLessThan(0.45);
+  });
+
+  it("still shrinks an oversized total from the last column backwards", () => {
+    const out = normaliseSizes([40, 40, 40], 2, 100);
+    expect(sum(out)).toBe(100);
+    expect(out[0]).toBe(40);
+  });
+
+  it("does not loop forever when even the minimums exceed maxTotal", () => {
+    const out = normaliseSizes([40, 40, 40], 40, 10);
+    expect(out.every((n) => n >= 40)).toBe(true);
   });
 });
 

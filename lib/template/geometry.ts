@@ -64,19 +64,23 @@ export function normaliseSizes(
   const list = (filtered.length ? filtered : [min]).map((n) =>
     Math.max(min, Math.round(n)),
   );
-  if (maxTotal !== undefined) {
-    let total = sum(list);
-    // Shrink from the last column backwards so the left-hand columns keep
-    // their measured widths, which is what users expect when dragging.
-    while (total > maxTotal && list.length > 1) {
-      const i = list.length - 1;
-      const excess = total - maxTotal;
-      const reducible = list[i]! - min;
-      const take = Math.min(reducible, excess);
-      list[i]! -= take;
-      total -= take;
-      if (take === 0) break;
-    }
+  if (maxTotal === undefined || list.length === 0) return list;
+
+  const floor = min * list.length;
+  const target = Math.max(floor, Math.round(maxTotal));
+  const total = sum(list);
+  if (total === target) return list;
+  if (total < target) {
+    return scaleSizesProportionally(list, target, min);
+  }
+
+  // Shrink from the last column backwards so the left-hand columns keep
+  // their measured widths, which is what users expect when dragging.
+  let excess = total - target;
+  for (let i = list.length - 1; i >= 0 && excess > 0; i--) {
+    const take = Math.min(list[i]! - min, excess);
+    list[i]! -= take;
+    excess -= take;
   }
   return list;
 }
@@ -198,26 +202,78 @@ export function fromCellIndex(
   return { row: Math.floor(index / cols), column: index % cols };
 }
 
+/**
+ * Distribute `total` across `sizes` while preserving their ratios.
+ *
+ * Every entry is floored first, then the leftover pixels are handed out one at
+ * a time to whichever entries lost the most to rounding, largest fraction
+ * first. This keeps the result as proportional as integers allow instead of
+ * giving the whole remainder to one column.
+ *
+ * Enforcing `min` can push the floored sum past the target (a 1:100 pair scaled
+ * to 20 floors to 8 + 19 = 27), so an overshoot is corrected by taking pixels
+ * back from the entries with the smallest fractions first.
+ */
+export function scaleSizesProportionally(
+  sizes: readonly number[],
+  total: number,
+  min: number,
+): number[] {
+  const n = sizes.length;
+  if (n === 0) return [];
+  const current = sum(sizes);
+  if (current <= 0 || !Number.isFinite(total) || total <= 0) return [...sizes];
+
+  const target = Math.max(min * n, Math.round(total));
+  const exact = sizes.map((s) => (s / current) * target);
+  const out = exact.map((v) => Math.max(min, Math.floor(v)));
+  const fracs = exact.map((v) => v - Math.floor(v));
+  const index = (ascending: boolean) =>
+    exact
+      .map((_, i) => i)
+      .sort((a, b) => (ascending ? fracs[a]! - fracs[b]! : fracs[b]! - fracs[a]!));
+
+  // The minimums may have overshot the target; take the excess back, starting
+  // with the entries that lost least to rounding.
+  let excess = sum(out) - target;
+  if (excess > 0) {
+    const order = index(true);
+    do {
+      for (const i of order) {
+        if (excess <= 0) break;
+        if (out[i]! > min) {
+          out[i]! -= 1;
+          excess -= 1;
+        }
+      }
+      // Re-enter the loop only while some entry is still above its minimum.
+    } while (excess > 0 && out.some((v) => v > min));
+    return out;
+  }
+
+  // Hand the leftover pixels to the entries that lost the most to flooring.
+  const order = index(false);
+  let remaining = target - sum(out);
+  while (remaining > 0 && out.some((_, i) => out[i]! < Math.floor(exact[i]!) + 1)) {
+    for (const i of order) {
+      if (remaining <= 0) break;
+      if (out[i]! < Math.floor(exact[i]!) + 1) {
+        out[i]! += 1;
+        remaining -= 1;
+      }
+    }
+  }
+  return out;
+}
+
 /** Resize columns to a new total width, preserving their relative ratios. */
 export function scaleColWidths(
   colWidths: readonly number[],
   newTotal: number,
   min = MIN_COL_WIDTH,
 ): number[] {
-  const current = totalWidth(colWidths);
-  if (current <= 0) return [...colWidths];
-  const raw = colWidths.map((w) => (w / current) * newTotal);
-  const floored = raw.map((w) => Math.max(min, Math.round(w)));
-  // Give any rounding remainder to the widest column.
-  const diff = Math.round(newTotal) - sum(floored);
-  if (diff !== 0) {
-    let widest = 0;
-    for (let i = 1; i < floored.length; i++) {
-      if (floored[i]! > floored[widest]!) widest = i;
-    }
-    floored[widest] = Math.max(min, floored[widest]! + diff);
-  }
-  return floored;
+  if (totalWidth(colWidths) <= 0) return [...colWidths];
+  return scaleSizesProportionally(colWidths, newTotal, min);
 }
 
 export function scaleRowHeights(
@@ -225,19 +281,8 @@ export function scaleRowHeights(
   newTotal: number,
   min = MIN_ROW_HEIGHT,
 ): number[] {
-  const current = totalHeight(rowHeights);
-  if (current <= 0) return [...rowHeights];
-  const raw = rowHeights.map((h) => (h / current) * newTotal);
-  const floored = raw.map((h) => Math.max(min, Math.round(h)));
-  const diff = Math.round(newTotal) - sum(floored);
-  if (diff !== 0) {
-    let tallest = 0;
-    for (let i = 1; i < floored.length; i++) {
-      if (floored[i]! > floored[tallest]!) tallest = i;
-    }
-    floored[tallest] = Math.max(min, floored[tallest]! + diff);
-  }
-  return floored;
+  if (totalHeight(rowHeights) <= 0) return [...rowHeights];
+  return scaleSizesProportionally(rowHeights, newTotal, min);
 }
 
 /** Gridline positions (column edges) in table-local coordinates. */
