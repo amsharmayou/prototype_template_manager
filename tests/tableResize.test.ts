@@ -33,13 +33,22 @@ describe("BillTable resize gesture", () => {
     }
   });
 
-  it("is idempotent, so a long drag cannot compound", () => {
+  it("resolves from the snapshot, so a drag that clamps cannot skew the ratios", () => {
     const t = makeTable();
     t.beginResizeGesture({ x: 500, y: 60 });
-    t.resizeColumnsTo(500);
-    const once = [...t.colWidths];
-    for (let i = 0; i < 20; i++) t.resizeColumnsTo(500);
-    expect(t.colWidths).toEqual(once);
+
+    // A clamp is the only thing that makes the snapshot differ from live
+    // state: it destroys the column ratios irreversibly in the live grid.
+    // Re-applying one absolute target proves nothing, because reaching it
+    // twice is a no-op either way.
+    t.resizeColumnsTo(3 * MIN_COL_WIDTH);
+    expect(t.colWidths).toEqual([MIN_COL_WIDTH, MIN_COL_WIDTH, MIN_COL_WIDTH]);
+
+    // Asking for the original 380 back must restore the original ratios:
+    // from the snapshot -> [300, 40, 40]; from the collapsed live grid ->
+    // [127, 127, 126], which is permanently skewed.
+    t.resizeColumnsTo(380);
+    expect(t.colWidths).toEqual([300, 40, 40]);
   });
 
   it("clamps at the minimum total instead of collapsing a column", () => {
@@ -100,7 +109,50 @@ describe("BillTable resize gesture", () => {
     t.beginResizeGesture({ x: 500, y: 60 });
     t.resizeColumnsTo(500);
     t.endResizeGesture();
-    t.resizeColumnsTo(250);
-    expect(sum(t.colWidths)).toBe(250);
+
+    // A pure resize cannot tell the two states apart: once the gesture is
+    // gone the live grid is just the snapshot rescaled, so the ratios agree.
+    // Collapsing is what separates them, because it rewrites the live grid
+    // while the stale snapshot keeps the original ratios.
+    t.resizeColumnsTo(3 * MIN_COL_WIDTH);
+    t.resizeColumnsTo(500);
+
+    // Gesture correctly ended: the base is the collapsed live grid, so the
+    // first column lands near 500 / 3. If endResizeGesture were a no-op the
+    // base would be the stale snapshot [300, 40, 40] and it would be 395.
+    expect(t.colWidths[0]).toBeGreaterThan(150);
+    expect(t.colWidths[0]).toBeLessThan(190);
+  });
+
+  it("never serialises a pending gesture", () => {
+    const t = makeTable();
+    t.beginResizeGesture({ x: 500, y: 60 });
+    t.resizeColumnsTo(500);
+
+    // A snapshot only means something inside one drag, so it must not be
+    // saved: without the explicit null this key is absent, not null.
+    expect(t.toObject().resizeGesture).toBeNull();
+  });
+
+  it("never restores a gesture, even from a payload that carries one", async () => {
+    // `fromObject` passes everything it does not destructure straight into
+    // `set`, so a stale or hand-edited payload could otherwise install a live
+    // gesture that silently overrides every later resize.
+    const payload = {
+      ...makeTable().toObject(),
+      resizeGesture: {
+        colWidths: [1, 1, 1],
+        rowHeights: [1, 1],
+        width: 3,
+        height: 2,
+        startX: 0,
+        startY: 0,
+        signX: 1,
+        signY: 1,
+      },
+    };
+
+    const restored = await BillTable.fromObject(payload);
+    expect(restored.resizeGesture).toBeNull();
   });
 });
