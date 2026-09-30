@@ -187,6 +187,15 @@ describe("scaleColWidths / scaleRowHeights", () => {
     const out = scaleColWidths([1000, 1, 1], 40);
     expect(out.every((n) => n >= MIN_COL_WIDTH)).toBe(true);
   });
+
+  it("distributes the remainder to the largest fractions, not the widest", () => {
+    // 7:11:13 at 47 is 10.61 / 16.68 / 19.71, so columns 1 and 2 gain a pixel
+    // each. The old implementation produced [11, 17, 19].
+    expect(scaleColWidths([7, 11, 13], 47)).toEqual([10, 17, 20]);
+    // 9:12:14 at 37 is 9.51 / 12.69 / 14.80, so rows 1 and 2 gain a pixel
+    // each. The old implementation produced [10, 13, 14].
+    expect(scaleRowHeights([9, 12, 14], 37)).toEqual([9, 13, 15]);
+  });
 });
 
 describe("scaleSizesProportionally", () => {
@@ -204,12 +213,17 @@ describe("scaleSizesProportionally", () => {
   });
 
   it("spreads the remainder across columns, not all onto the widest", () => {
-    // 1/3 each of 100 cannot divide evenly, so exactly one column must
-    // carry the extra pixel. The old implementation always picked index 0.
-    const out = scaleSizesProportionally([1, 1, 1], 100, 2);
-    const bumped = out.filter((n) => n === 34).length;
-    expect(sum(out)).toBe(100);
-    expect(bumped).toBe(1);
+    // 13:11:7 at 47 is 19.71 / 16.68 / 10.61, so the two largest fractions
+    // are columns 0 and 1 and the narrowest column keeps its floor. The old
+    // implementation produced [19, 17, 11] here: a pixel handed to the
+    // narrowest column and charged to the widest.
+    const out = scaleSizesProportionally([13, 11, 7], 47, 2);
+    expect(out).toEqual([20, 17, 10]);
+    expect(sum(out)).toBe(47);
+    // A single leftover pixel goes to whichever entry lost the most to
+    // flooring. At 46 the narrowest column has the largest fraction
+    // (10.39), so it takes the pixel and the widest does not.
+    expect(scaleSizesProportionally([13, 11, 7], 46, 2)).toEqual([19, 16, 11]);
   });
 
   it("honours the minimum without losing the total", () => {
@@ -251,9 +265,13 @@ describe("normaliseSizes maxTotal clamps upward as well as downward", () => {
     expect(out[0]).toBe(40);
   });
 
-  it("does not loop forever when even the minimums exceed maxTotal", () => {
-    const out = normaliseSizes([40, 40, 40], 40, 10);
-    expect(out.every((n) => n >= 40)).toBe(true);
+  it("lets the minimums win over maxTotal instead of looping", () => {
+    // target clamps up to min * length, so the shrink loop drains all three
+    // columns to their minimums and exits. The old implementation stopped
+    // after the last column and left [40, 40, 8] with a total of 88.
+    const out = normaliseSizes([40, 40, 40], 8, 10);
+    expect(out).toEqual([8, 8, 8]);
+    expect(sum(out)).toBe(24);
   });
 });
 
