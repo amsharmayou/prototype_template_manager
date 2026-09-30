@@ -14,7 +14,11 @@
 
 - Source stays in `C:\Users\Lenovo\Desktop\Personal Project\Prototype\version 1`; this is not a git worktree.
 - PowerShell on this machine cannot execute unsigned `.ps1` shims, so **every npm invocation must use `npm.cmd`**, e.g. `npm.cmd test`, not `npm test`. Using `npm` fails with `PSSecurityException`.
-- Geometry is pure and lives in `lib/template/geometry.ts`. All arithmetic that decides column or row sizes belongs there, not in `EditorController` or `BillTable`.
+- Geometry is pure and lives in `lib/template/geometry.ts`. All arithmetic that
+  *splits* a target extent into individual column widths or row heights belongs
+  there. The caller may only decide *what extent* to ask for — never how it is
+  divided. `EditorController` computes a target width/height from the pointer;
+  `BillTable` hands that target to `scaleColWidths`/`scaleRowHeights`.
 - Tables keep `scaleX`/`scaleY` pinned to 1. Scaling is converted into real `colWidths`/`rowHeights`; Fabric scaling is never allowed to persist.
 - No comments are added to source files unless a comment is required to explain a non-obvious Fabric or geometry constraint.
 - The template format, the JSON schema and all four exporters must be untouched by this plan.
