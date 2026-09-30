@@ -598,6 +598,13 @@ export class EditorController {
     if (!canvas) return;
     const p = opt.scenePoint;
 
+    // The resize snapshot opens before the pan bail. Fabric's Alt gesture is a
+    // centred scale that still fires `object:scaling`, and a table that reaches
+    // the scaling handler without a gesture falls back to multiplying its
+    // already-resized widths by Fabric's scale, which compounds every event.
+    if (opt.target instanceof BillTable) {
+      opt.target.beginResizeGesture({ x: p.x, y: p.y });
+    }
     if (this.spaceHeld || opt.e?.altKey) return;
 
     // Remember where the object sat before the gesture, so a resize can pin
@@ -606,9 +613,6 @@ export class EditorController {
       ? { left: opt.target.left ?? 0, top: opt.target.top ?? 0 }
       : null;
     this.lastKnownScenePoint = { x: p.x, y: p.y };
-    if (opt.target instanceof BillTable) {
-      opt.target.beginResizeGesture({ x: p.x, y: p.y });
-    }
 
     const tool = this.state.tool;
     if (tool === "select") return;
@@ -1040,15 +1044,15 @@ export class EditorController {
         } as never);
         table.resizeColumnsTo(width);
         table.resizeRowsTo(height);
-        table.set({ scaleX: 1, scaleY: 1 } as never);
       } else {
         // No gesture: fall back to the scale Fabric reports.
         const factorX = table.scaleX;
         const factorY = table.scaleY;
         table.scaleColumns(factorX);
         table.scaleRows(factorY);
-        table.set({ scaleX: 1, scaleY: 1 } as never);
       }
+      // A table is never scaled, so both branches must leave the scale at 1.
+      table.set({ scaleX: 1, scaleY: 1 } as never);
       table.setCoords();
       this.canvas?.requestRenderAll();
       return;
@@ -1064,8 +1068,12 @@ export class EditorController {
     target.setCoords();
   };
 
-  private onObjectModified = (): void => {
-    this.getTable()?.endResizeGesture();
+  private onObjectModified = (opt: { target?: FabricObject }): void => {
+    // Close the resize gesture on the object that was actually transformed,
+    // then write one history entry, so a whole drag is a single undo step.
+    if (opt.target instanceof BillTable) opt.target.endResizeGesture();
+    else this.getTable()?.endResizeGesture();
+    this.lastKnownScenePoint = null;
     this.commit("Transform");
   };
 
