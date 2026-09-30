@@ -946,6 +946,46 @@ git commit -m "docs: explain proportional table resizing and the compounding-sca
 
 ---
 
+### Task 4 as built — corrections to the task text above
+
+The implementer found three defects in this task's brief. The brief text above is
+left as-written so the record shows what the implementer was actually given; these
+are the corrections that shipped in `fa14858`.
+
+1. **The magnitude formula above is wrong.** It reads `(handle.dx * 2) / zoom`, but
+   `beginResizeGesture` folds drag direction into `signX`/`signY`
+   (`BillTable.ts:274-275`) and `onObjectScaling` applies
+   `(p.x - gesture.startX) * signX` (`EditorController.ts:1040-1041`). For a
+   left/top handle both the sign and the pointer delta are negative, so the product
+   is positive and growth is `Math.abs` of the travel. Shipped:
+   `Math.abs(handle.dx) * 2 / before.zoom`. The signed form demanded −129.83 where
+   +129.83 is delivered, failing 5 of the 8 handles with a residual of exactly twice
+   the ask.
+2. **The unconditional `expect(after.width).not.toBe(before.width)` above is false
+   for the top and bottom handles**, which have `dx === 0` on the centreline and
+   leave the width unchanged (measured 401 → 401). It would have shipped two red
+   tests. Shipped: axis-aware, driving width only when `fx !== 0.5` and height only
+   when `fy !== 0.5`.
+3. **The commit message above makes two false claims.** `toBeCloseTo(_, 1)` is a 5%
+   tolerance, not 2%. And the share assertion is *not* what catches a compounding
+   drag — the implementer proved the share assertion passes against the fully
+   reverted code. Shipped: a magnitude check against the pointer's scene delta is
+   the discriminating assertion, and all 8 handle tests fail on it.
+
+Tolerance derivation, for anyone revisiting these numbers: `tableState` rounds both
+readings, contributing ±1, and integer `MouseEvent.clientX/clientY` contributes
+±0.5 screen px ≈ ±0.81 scene units, for a worst case of ~1.81. A ±1 bound would sit
+inside the noise floor, so **±2 driven / ±4 non-driven is the tightest defensible
+value**. The non-driven ±4 exists because the height target is computed on every
+scaling event regardless of which control was grabbed (a known, separately tracked
+imprecision); the measured jitter turned out to be 0.
+
+The `* 2` drag scaling and `steps: 12` are load-bearing for the `right`/`bottom`
+revert-detection margin (~3.5×, against 11.5× headroom on the correct path). The
+compounding factor is applied once per scaling event, so shortening either shrinks
+the residual roughly proportionally and those two handles would stop discriminating
+first while the other six still passed.
+
 ## Final Verification
 
 Run all five gates. This is the definition of done for this plan.
