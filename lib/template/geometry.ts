@@ -228,16 +228,16 @@ export function scaleSizesProportionally(
   const exact = sizes.map((s) => (s / current) * target);
   const out = exact.map((v) => Math.max(min, Math.floor(v)));
   const fracs = exact.map((v) => v - Math.floor(v));
-  const index = (ascending: boolean) =>
+  const orderByFraction = (descending: boolean) =>
     exact
       .map((_, i) => i)
-      .sort((a, b) => (ascending ? fracs[a]! - fracs[b]! : fracs[b]! - fracs[a]!));
+      .sort((a, b) => (descending ? fracs[b]! - fracs[a]! : fracs[a]! - fracs[b]!));
 
   // The minimums may have overshot the target; take the excess back, starting
   // with the entries that lost least to rounding.
   let excess = sum(out) - target;
   if (excess > 0) {
-    const order = index(true);
+    const order = orderByFraction(false);
     do {
       for (const i of order) {
         if (excess <= 0) break;
@@ -252,7 +252,7 @@ export function scaleSizesProportionally(
   }
 
   // Hand the leftover pixels to the entries that lost the most to flooring.
-  const order = index(false);
+  const order = orderByFraction(true);
   let remaining = target - sum(out);
   while (remaining > 0 && out.some((_, i) => out[i]! < Math.floor(exact[i]!) + 1)) {
     for (const i of order) {

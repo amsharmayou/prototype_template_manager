@@ -124,6 +124,22 @@ describe("BillTable resize gesture", () => {
     expect(t.colWidths[0]).toBeLessThan(190);
   });
 
+  it("round-trips the resized grid through the serialiser", async () => {
+    // The resized grid is what a save writes, so a resize must survive
+    // serialisation exactly: every column width the drag produced comes back
+    // unchanged, and `width` is re-derived from them on load.
+    const t = makeTable();
+    t.beginResizeGesture({ x: 500, y: 60 });
+    t.resizeColumnsTo(512);
+    t.resizeRowsTo(71);
+
+    const restored = await BillTable.fromObject(t.toObject());
+    expect(restored.colWidths).toEqual(t.colWidths);
+    expect(restored.rowHeights).toEqual(t.rowHeights);
+    expect(restored.width).toBe(t.width);
+    expect(restored.height).toBe(t.height);
+  });
+
   it("never serialises a pending gesture", () => {
     const t = makeTable();
     t.beginResizeGesture({ x: 500, y: 60 });

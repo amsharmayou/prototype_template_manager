@@ -212,7 +212,7 @@ describe("scaleSizesProportionally", () => {
     expect(sum(out)).toBe(380);
   });
 
-  it("spreads the remainder across columns, not all onto the widest", () => {
+  it("hands each leftover pixel to the entry with the largest fraction", () => {
     // 13:11:7 at 47 is 19.71 / 16.68 / 10.61, so the two largest fractions
     // are columns 0 and 1 and the narrowest column keeps its floor. The old
     // implementation produced [19, 17, 11] here: a pixel handed to the

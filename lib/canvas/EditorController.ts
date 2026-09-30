@@ -223,6 +223,7 @@ export class EditorController {
     canvas.on("mouse:wheel", this.onWheel);
     canvas.on("object:moving", this.onObjectMoving);
     canvas.on("object:scaling", this.onObjectScaling);
+    canvas.on("object:skewing", this.onObjectSkewing);
     canvas.on("object:modified", this.onObjectModified);
     canvas.on("text:changed", this.onTextChanged);
     canvas.on("selection:created", this.onSelectionChanged);
@@ -249,6 +250,7 @@ export class EditorController {
       canvas.off("mouse:wheel", this.onWheel);
       canvas.off("object:moving", this.onObjectMoving);
       canvas.off("object:scaling", this.onObjectScaling);
+      canvas.off("object:skewing", this.onObjectSkewing);
       canvas.off("object:modified", this.onObjectModified);
       canvas.off("text:changed", this.onTextChanged);
       canvas.off("selection:created", this.onSelectionChanged);
@@ -604,6 +606,11 @@ export class EditorController {
     // multiplying its already-resized widths by Fabric's scale, which compounds
     // every event, and without the anchor the handler has nothing to re-pin, so
     // the table walks off-canvas instead of growing from its top-left.
+    // Arming on *every* table mouse-down rather than only a handle grab is safe
+    // only because `resizeColumnsTo`/`resizeRowsTo` have a single production
+    // caller and every real scaling event re-arms before using them. A caller
+    // outside a scaling event would resize the grid during marquee selection,
+    // moves and cell clicks, where nothing re-arms it.
     if (opt.target instanceof BillTable) {
       opt.target.beginResizeGesture({ x: p.x, y: p.y });
     }
@@ -1028,13 +1035,12 @@ export class EditorController {
     if (appType === "table") {
       // A table is resized by changing its column widths, never by scaling,
       // so that the grid stays exact. The target size comes from the pointer's
-      // displacement since mouse-down, not from Fabric's scaleX: fabric derives
-      // that scale as a fixed numerator over a live denominator
-      // (`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where
-      // `distance` and `original.scaleX` are captured at mouse-down but `dim` is
-      // `target._getTransformedDimensions()` read fresh each move). A table that
-      // grows its own width mid-drag therefore gets a different divisor on every
-      // event, and multiplying the current widths by the result compounds.
+      // displacement since mouse-down rather than from Fabric's scaleX: fabric
+      // rebuilds that scale on every event as the live pointer position read
+      // against the mouse-down origin, over the object's live transformed size,
+      // so a table that grows its own width mid-drag hands fabric a different
+      // divisor every event, and multiplying the current widths by the result
+      // compounds.
       const table = target as BillTable;
       const gesture = table.resizeGesture;
       const p = this.resolveScenePoint(opt.e);
@@ -1071,6 +1077,25 @@ export class EditorController {
       } as never);
     }
     target.setCoords();
+  };
+
+  /**
+   * A table cannot carry skew, so refuse it.
+   *
+   * Fabric's `altActionKey` is `shiftKey`, so Shift on a side handle routes to
+   * the skew handlers and `object:scaling` never fires. The serialiser stores
+   * `angle` but not `skewX`/`skewY`, so the skew would vanish on save and the
+   * table would silently un-skew on reload; `skewObject` also inflates `scaleX`
+   * to compensate for a skewed `skewX`, and a table must never carry a scale.
+   * Undoing both leaves the drag resizing nothing, which is the honest outcome
+   * until skew is either blocked upstream or supported end to end.
+   */
+  private onObjectSkewing = (opt: { target?: FabricObject }): void => {
+    const target = opt.target;
+    if (!(target instanceof BillTable)) return;
+    target.set({ skewX: 0, skewY: 0, scaleX: 1, scaleY: 1 } as never);
+    target.setCoords();
+    this.canvas?.requestRenderAll();
   };
 
   private onObjectModified = (opt: { target?: FabricObject }): void => {

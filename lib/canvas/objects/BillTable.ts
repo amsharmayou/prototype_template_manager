@@ -252,12 +252,13 @@ export class BillTable extends FabricObject {
   }
 
   /**
-   * Snapshot the grid at the moment a handle is grabbed.
+   * Snapshot the grid at the start of a gesture.
    *
-   * The sign per axis records which side of the table the pointer started on,
-   * so every handle resizes away from this object's top-left. Deriving it
-   * from the pointer position avoids depending on which control Fabric
-   * considers active.
+   * Armed on every table mouse-down, not only a handle grab, so the snapshot is
+   * always available when a scaling event arrives. The sign per axis records
+   * which side of the table the pointer started on, so every handle resizes
+   * away from this object's top-left. Deriving it from the pointer position
+   * avoids depending on which control Fabric considers active.
    */
   beginResizeGesture(startPointer: { x: number; y: number }): void {
     const w = totalWidth(this.colWidths);

@@ -51,6 +51,8 @@ interface EditorWindow extends Window {
       height: number;
       scaleX: number;
       scaleY: number;
+      skewX: number;
+      skewY: number;
       rows: number;
       columns: number;
       colWidths: number[];
@@ -531,6 +533,8 @@ interface TableState {
   height: number;
   scaleX: number;
   scaleY: number;
+  skewX: number;
+  skewY: number;
   colWidths: number[];
   rowHeights: number[];
   colSum: number;
@@ -550,6 +554,8 @@ async function tableState(page: Page): Promise<TableState> {
       height: Math.round(t!.height),
       scaleX: t!.scaleX,
       scaleY: t!.scaleY,
+      skewX: t!.skewX,
+      skewY: t!.skewY,
       colWidths: [...t!.colWidths],
       rowHeights: [...t!.rowHeights],
       colSum: t!.colWidths.reduce((x, y) => x + y, 0),
@@ -996,12 +1002,23 @@ test.describe("Dialogs and table editing", () => {
     expect(check.svgFirst![2]).toBeCloseTo(check.colWidths[0]!, 3);
   });
 
-/**
+  /**
    * The eight Fabric scale controls, with the drag direction that pulls each
-   * one outward: `dx`/`dy` are doubled so the move is far enough to clear the
-   * control's hit area and register as a real gesture.
+   * one outward.
+   *
+   * Fabric binds the control at `mouse:down` and never re-hit-tests it while
+   * the gesture runs, so `dx`/`dy` do not have to stay inside the control's
+   * box. They are doubled to make the expected growth several times the +/-2
+   * unit tolerance below, so rounding noise cannot hide a compounding drag.
    */
-  const HANDLES = [
+  const HANDLES: ReadonlyArray<{
+    name: string;
+    fx: number;
+    fy: number;
+    dx: number;
+    dy: number;
+    shift?: boolean;
+  }> = [
     { name: "top-left", fx: 0, fy: 0, dx: -40, dy: -40 },
     { name: "top", fx: 0.5, fy: 0, dx: 0, dy: -40 },
     { name: "top-right", fx: 1, fy: 0, dx: 40, dy: -40 },
@@ -1010,10 +1027,20 @@ test.describe("Dialogs and table editing", () => {
     { name: "bottom-left", fx: 0, fy: 1, dx: -40, dy: 40 },
     { name: "bottom", fx: 0.5, fy: 1, dx: 0, dy: 40 },
     { name: "bottom-right", fx: 1, fy: 1, dx: 40, dy: 40 },
-  ] as const;
+    // `altActionKey` is `shiftKey`, so Shift turns the side handles into skew
+    // handles and `object:scaling` never fires. The drag must be diagonal:
+    // `skewObject` derives its angle from the pointer's travel along the
+    // counter-axis, so a purely axial drag would skew by exactly zero and the
+    // case would pass without ever reaching the skew handler. A sheared table
+    // is not serialised, so it would also come back un-sheared on reload.
+    { name: "right with Shift", fx: 1, fy: 0.5, dx: 40, dy: 40, shift: true },
+    // `skewX` additionally drives a `scaleX` compensation inside `skewObject`,
+    // so the top/bottom handles cover the other half of the state.
+    { name: "bottom with Shift", fx: 0.5, fy: 1, dx: 40, dy: 40, shift: true },
+  ];
 
   for (const handle of HANDLES) {
-    test(`the ${handle.name} handle keeps the top-left pinned and stays proportional`, async ({
+    test(`the ${handle.name} handle ${handle.shift ? "never skews the table" : "keeps the top-left pinned and stays proportional"}`, async ({
       page,
     }) => {
       const P = await openWith(page, FIXTURE);
@@ -1026,6 +1053,7 @@ test.describe("Dialogs and table editing", () => {
         before.left + handle.fx * before.width,
         before.top + handle.fy * before.height,
       );
+      if (handle.shift) await page.keyboard.down("Shift");
       await page.mouse.move(grip.x, grip.y);
       await page.waitForTimeout(150);
       await page.mouse.down();
@@ -1035,6 +1063,7 @@ test.describe("Dialogs and table editing", () => {
       });
       await page.waitForTimeout(120);
       await page.mouse.up();
+      if (handle.shift) await page.keyboard.up("Shift");
       await page.waitForTimeout(400);
 
       const after = await tableState(page);
@@ -1048,8 +1077,20 @@ test.describe("Dialogs and table editing", () => {
       expect(after.colSum).toBe(after.width);
       expect(after.rowSum).toBe(after.height);
 
-      // The drag is applied in screen pixels but the table lives in scene
-      // units, so the ask is `dx * 2 / zoom` scene units. A handle on the
+      if (handle.shift) {
+        // A table can express neither skew nor scale, and the serialiser drops
+        // skew entirely, so anything left on the object would come back
+        // different after a reload. Refusing the gesture resizes nothing,
+        // which is the honest outcome: without this the drag shears the table.
+        expect(after.skewX).toBe(0);
+        expect(after.skewY).toBe(0);
+        expect(after.colWidths).toEqual(before.colWidths);
+        expect(after.rowHeights).toEqual(before.rowHeights);
+        return;
+      }
+
+      // The drag is applied in screen pixels but the table lives in document
+      // units, so the ask is `dx * 2 / zoom` document units. A handle on the
       // left or right drives x, one on the top or bottom drives y, and a
       // corner drives both. The growth is the distance, not the signed delta:
       // the gesture already turned the pointer's direction into a per-axis
@@ -1058,7 +1099,7 @@ test.describe("Dialogs and table editing", () => {
       //
       // This is the assertion that catches a compounding drag: the old
       // handler multiplied the already-resized widths by Fabric's scaleX on
-      // every event, so the ask of ~130 scene units landed anywhere from
+      // every event, so the ask of ~130 document units landed anywhere from
       // ~7 to ~910 off. Measured residual on the fixed code is 0.17, so +/-2
       // leaves an order of magnitude of headroom over the noise while still
       // sitting far below the smallest observed bug (7.8 on the right

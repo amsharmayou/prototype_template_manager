@@ -134,7 +134,11 @@ function SinglePanel({
             <NumberInput
               value={o.width}
               onChange={(v) => apply((obj) => {
-                obj.set({ width: v } as never);
+                // A table's width is the sum of its column widths, so the raw
+                // set would desync the two and leave the grid drawn inside an
+                // oversized selection box.
+                if (obj instanceof BillTable) obj.resizeColumnsTo(v);
+                else obj.set({ width: v } as never);
               }, "Resize")}
             />
           </Field>
@@ -142,7 +146,8 @@ function SinglePanel({
             <NumberInput
               value={o.height}
               onChange={(v) => apply((obj) => {
-                obj.set({ height: v } as never);
+                if (obj instanceof BillTable) obj.resizeRowsTo(v);
+                else obj.set({ height: v } as never);
               }, "Resize")}
             />
           </Field>
