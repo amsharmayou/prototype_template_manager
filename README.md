@@ -249,15 +249,18 @@ These cost real debugging time and are load-bearing for anyone extending this:
    recomputes it on every `object:scaling` as the pointer's position inside the
    transform captured at `mouse:down`, divided by the object's *current*
    transformed width — `|newPoint.x * target.scaleX / dim.x` in `scaleObject`,
-   with `dim` read live off the object. An object that rewrites its own `width`
-   mid-drag and resets `scaleX` to 1 is therefore feeding a moving denominator
-   into a fixed-numerator ratio: the number changes on every event, and
-   re-applying it to the already-resized widths compounds, which is how a drag
-   asking for ~130 units could land anywhere from ~7 to ~910 out. The fix is to
-   ignore `scaleX` altogether — derive the target size from the pointer's
-   displacement since `mouse:down`, and resolve the column geometry from a
-   snapshot taken when the gesture began, so re-applying the same absolute
-   target is a no-op rather than one more multiplication.
+   with `dim` read live off the object. That is the axis branch the four edge
+   handles always take, and the one the corners take unless uniform scaling is
+   toggled; the uniform branch divides the same distance by that same live
+   `dim`. So an object that rewrites its own `width` mid-drag and resets
+   `scaleX` to 1 is feeding a moving denominator into a fixed-numerator ratio:
+   the number changes on every event, and re-applying it to the already-resized
+   widths compounds, which is how a drag asking for ~130 scene units could miss
+   by anywhere from ~7 to ~910. The fix is that the drag path never reads
+   `scaleX`: it derives the target size from the pointer's displacement since
+   `mouse:down` and resolves the column geometry from a snapshot taken when the
+   gesture began, so re-applying the same absolute target is a no-op rather than
+   one more multiplication.
 
 ---
 
@@ -308,7 +311,8 @@ lib/
     toPdf.ts                     jsPDF
     toDocx.ts                    docx, with the banding algorithm
     download.ts                  Blob/URL download helpers
-tests/                           Vitest: geometry, placeholders, serialize, history
+tests/                           Vitest: geometry, placeholders, serialize, history,
+                                 tableResize
 e2e/
   workflow.spec.ts               17-step end-to-end workflow
   make-fixture.ts                Generates the A4 and 2600px-tall bill PNGs
@@ -335,14 +339,17 @@ imports it directly rather than going through `@eslint/eslintrc`.
 ## Testing
 
 ```bash
-npm test        # 66 unit tests over the pure layer
+npm test        # 88 unit tests over the pure layer and the table resize gesture
 npm run test:e2e
 ```
 
 Unit tests cover what a `<canvas>` cannot be meaningfully tested for in jsdom:
 table geometry and hit testing, placeholder parsing, the serialiser contract
 (including that a reference image can never appear, and that unknown Fabric
-types are skipped), and the history stack.
+types are skipped), the history stack, and the table resize gesture (that a drag
+resolves from its snapshot rather than compounding, that no single column
+absorbs the whole expansion, and that a pending gesture never reaches the
+serialiser or a reload).
 
 The E2E test drives the real browser through the full workflow: upload a local
 bill, verify the reference is a non-selectable 25%-opacity image, trace borders,
@@ -363,10 +370,9 @@ zoom.
 A third suite covers the page/image binding (the page adopts the image's exact
 shape; loading a differently-sized template re-binds the image instead of
 detaching it) and table editing (dialog values can be cleared and retyped, grid
-size accepts a retyped value, column and row resizes never move the table's
-top-left, all eight handles keep that top-left pinned while every column holds
-its share of the new total, and the table's paint origin matches Fabric's
-centred origin).
+size accepts a retyped value, all eight handles keep the table's top-left pinned
+while every column holds its share of the new total, and the table's paint
+origin matches Fabric's centred origin).
 
 Wheel behaviour is asserted with synthetic events, because Playwright's
 `mouse.wheel()` does not deliver a DOM wheel event to the page in this headless
@@ -417,17 +423,20 @@ unaffected, so the traced template stays registered to the image at any zoom.
 A table's shape is **real geometry, not a scale factor**. `colWidths` and
 `rowHeights` are the authoritative layout, `width` and `height` are only their
 sums, and `scaleX`/`scaleY` are held at 1. That is what keeps the grid exact in
-every export — JSON stores the real widths, SVG and PDF draw the gridlines at
-them, and DOCX emits them as native Word column widths and row heights — and it
-is why a resize has to be expressed as new widths rather than as a scale.
+the JSON, SVG and PDF exports — JSON stores the real widths, and SVG and PDF
+draw the gridlines at them — and it is why a resize has to be expressed as new
+widths rather than as a scale. DOCX carries those same numbers as native Word
+column widths and row heights, subject to the flow-approximation caveat
+described above.
 
 - **Drag any of the eight scale handles** — the four corners and the four edge
   midpoints. Every one of them resizes *away from a pinned top-left*: `left` and
   `top` are captured when the handle is grabbed and re-asserted on every
-  pointer-move, so the top-left corner never moves and the box only ever
-  extends right and down. Which way you pull does not matter — dragging the
-  top-left handle up and left grows the table just as dragging the bottom-right
-  handle down and right does.
+  pointer-move, so the top-left corner never moves. The table is always the
+  region right and below that corner — it can grow or shrink, but its origin
+  cannot move. Which way you pull does not matter — dragging the top-left handle
+  up and left grows the table just as dragging the bottom-right handle down and
+  right does.
 - **Every column and row keeps its share of the total.** The new total is
   distributed across the existing sizes with the rounding remainder handed to
   whichever columns lost most to flooring, so no single column absorbs the
@@ -476,8 +485,8 @@ Shortcuts are suppressed while typing in a field or editing text.
 - **DOCX is a flow approximation**, as described above. Vertical rules become
   right-bordered spacers and rectangles become bordered paragraphs.
 - **Per-column table resizing by dragging** is not implemented; a handle drag
-  scales the whole table proportionally. Set individual widths and heights
-  numerically in the properties panel.
+  resizes every column and row by the same factor. Set individual widths and
+  heights numerically in the properties panel.
 - **Text vertical alignment** is stored but not yet honoured on canvas or in
   exports.
 - **No persistence beyond explicit Save/Load.** No autosave, no project
