@@ -245,6 +245,20 @@ These cost real debugging time and are load-bearing for anyone extending this:
    rather than geometry. The regression test for finding 7 asserts the paint
    origin directly (the first `<rect>` in `_toSVG`), which is exact.
 
+9. **A drag's `scaleX` is not a stable factor to multiply by.** Fabric
+   recomputes it on every `object:scaling` as the pointer's position inside the
+   transform captured at `mouse:down`, divided by the object's *current*
+   transformed width — `|newPoint.x * target.scaleX / dim.x` in `scaleObject`,
+   with `dim` read live off the object. An object that rewrites its own `width`
+   mid-drag and resets `scaleX` to 1 is therefore feeding a moving denominator
+   into a fixed-numerator ratio: the number changes on every event, and
+   re-applying it to the already-resized widths compounds, which is how a drag
+   asking for ~130 units could land anywhere from ~7 to ~910 out. The fix is to
+   ignore `scaleX` altogether — derive the target size from the pointer's
+   displacement since `mouse:down`, and resolve the column geometry from a
+   snapshot taken when the gesture began, so re-applying the same absolute
+   target is a no-op rather than one more multiplication.
+
 ---
 
 ## Files
@@ -350,8 +364,9 @@ A third suite covers the page/image binding (the page adopts the image's exact
 shape; loading a differently-sized template re-binds the image instead of
 detaching it) and table editing (dialog values can be cleared and retyped, grid
 size accepts a retyped value, column and row resizes never move the table's
-top-left, corner and edge handles resize the grid right and down only, and the
-table's paint origin matches Fabric's centred origin).
+top-left, all eight handles keep that top-left pinned while every column holds
+its share of the new total, and the table's paint origin matches Fabric's
+centred origin).
 
 Wheel behaviour is asserted with synthetic events, because Playwright's
 `mouse.wheel()` does not deliver a DOM wheel event to the page in this headless
@@ -399,12 +414,28 @@ unaffected, so the traced template stays registered to the image at any zoom.
 
 ## Resizing a table
 
-Tables are resized by **changing column widths and row heights**, never by
-scaling, which keeps the grid exact and exportable. The top-left corner is
-always pinned, so a table only ever grows right and down:
+A table's shape is **real geometry, not a scale factor**. `colWidths` and
+`rowHeights` are the authoritative layout, `width` and `height` are only their
+sums, and `scaleX`/`scaleY` are held at 1. That is what keeps the grid exact in
+every export — JSON stores the real widths, SVG and PDF draw the gridlines at
+them, and DOCX emits them as native Word column widths and row heights — and it
+is why a resize has to be expressed as new widths rather than as a scale.
 
-- drag any corner or edge handle, exactly like a rectangle;
-- or set values numerically in the properties panel.
+- **Drag any of the eight scale handles** — the four corners and the four edge
+  midpoints. Every one of them resizes *away from a pinned top-left*: `left` and
+  `top` are captured when the handle is grabbed and re-asserted on every
+  pointer-move, so the top-left corner never moves and the box only ever
+  extends right and down. Which way you pull does not matter — dragging the
+  top-left handle up and left grows the table just as dragging the bottom-right
+  handle down and right does.
+- **Every column and row keeps its share of the total.** The new total is
+  distributed across the existing sizes with the rounding remainder handed to
+  whichever columns lost most to flooring, so no single column absorbs the
+  leftover pixel and the proportions survive as closely as integers allow. A
+  column cannot go below 8px, nor a row below 8px, so a drag cannot collapse
+  the grid.
+- **Or set values numerically** in the properties panel, one column or row at a
+  time.
 
 Both paths leave `left`/`top` untouched and keep `scaleX`/`scaleY` at 1.
 
@@ -444,9 +475,9 @@ Shortcuts are suppressed while typing in a field or editing text.
   properties panel.
 - **DOCX is a flow approximation**, as described above. Vertical rules become
   right-bordered spacers and rectangles become bordered paragraphs.
-- **Per-column table resizing by dragging** is not implemented; widths are set
-  numerically in the properties panel. Dragging a table's corner converts
-  nothing because tables keep `scaleX = 1` — resize via the panel.
+- **Per-column table resizing by dragging** is not implemented; a handle drag
+  scales the whole table proportionally. Set individual widths and heights
+  numerically in the properties panel.
 - **Text vertical alignment** is stored but not yet honoured on canvas or in
   exports.
 - **No persistence beyond explicit Save/Load.** No autosave, no project
