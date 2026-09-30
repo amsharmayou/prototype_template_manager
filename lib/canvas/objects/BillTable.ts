@@ -450,6 +450,10 @@ export class BillTable extends FabricObject {
       fontFamily: (fontFamily as string) ?? DEFAULT_TABLE_SPEC.fontFamily,
     });
 
+    // `enlivenObjects` reads `type` to choose the class before it calls this,
+    // so the value is spent by the time we get here. Passing it on would make
+    // Fabric's `set` log "Setting type has no effect" on every template load.
+    delete fabricProps.type;
     table.set(fabricProps as never);
     table.resizeGesture = null;
     table.setCoords();
