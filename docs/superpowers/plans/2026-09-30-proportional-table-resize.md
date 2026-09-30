@@ -562,24 +562,22 @@ In `lib/canvas/objects/BillTable.ts`, insert immediately before `scaleColumns`:
 
 - [ ] **Step 5: Exclude the pending gesture from serialisation**
 
-A snapshot only means something inside one drag, so it must not be saved. In
-`toObject`, add one line after `type: "BillTable"`:
+A snapshot only means something inside one drag, so it must not be saved or
+restored. In `toObject`, add one line after `type: "BillTable"`:
 
 ```ts
       resizeGesture: null,
 ```
 
-In `fromObject`, destructure it away so it cannot overwrite a live gesture. Add
-`resizeGesture` to the destructuring list:
+In `fromObject`, `...fabricProps` is passed straight to `table.set(...)`, so
+`resizeGesture` would otherwise be assigned through as a non-Fabric property.
+Clear it explicitly after the `set` call instead of destructuring it away — a
+destructured-away binding would be dead code that `no-unused-vars` may flag,
+whereas one assignment cannot be. Add after the existing `table.set(fabricProps as never);`:
 
 ```ts
-      fontFamily,
-      resizeGesture: _ignoredResizeGesture,
-      ...fabricProps
+    table.resizeGesture = null;
 ```
-
-Rename the unused binding to `_ignoredResizeGesture` so ESLint's
-`no-unused-vars` does not flag it.
 
 - [ ] **Step 6: Run the test to verify it passes**
 
