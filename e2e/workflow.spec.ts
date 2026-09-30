@@ -531,10 +531,13 @@ interface TableState {
   height: number;
   scaleX: number;
   scaleY: number;
+  colWidths: number[];
+  rowHeights: number[];
   colSum: number;
   rowSum: number;
   rows: number;
   columns: number;
+  zoom: number;
 }
 
 async function tableState(page: Page): Promise<TableState> {
@@ -547,10 +550,13 @@ async function tableState(page: Page): Promise<TableState> {
       height: Math.round(t!.height),
       scaleX: t!.scaleX,
       scaleY: t!.scaleY,
+      colWidths: [...t!.colWidths],
+      rowHeights: [...t!.rowHeights],
       colSum: t!.colWidths.reduce((x, y) => x + y, 0),
       rowSum: t!.rowHeights.reduce((x, y) => x + y, 0),
       rows: t!.rows,
       columns: t!.columns,
+      zoom: window.__btm.getCanvas()!.getZoom(),
     };
   });
 }
@@ -948,64 +954,6 @@ test.describe("Dialogs and table editing", () => {
     expect(afterRow.rowSum).toBe(afterRow.height);
   });
 
-  test("a table resizes from its corner handles, growing right and down only", async ({
-    page,
-  }) => {
-    const P = await openWith(page, FIXTURE);
-    await drawTable(page, P, [150, 250], [550, 450]);
-    const before = await tableState(page);
-
-    const corner = await P(
-      before.left + before.width,
-      before.top + before.height,
-    );
-    await page.mouse.move(corner.x, corner.y);
-    await page.waitForTimeout(150);
-    await page.mouse.down();
-    await page.waitForTimeout(120);
-    await page.mouse.move(corner.x + 100, corner.y + 60, { steps: 12 });
-    await page.waitForTimeout(120);
-    await page.mouse.up();
-    await page.waitForTimeout(400);
-
-    const after = await tableState(page);
-    // The top-left corner is pinned; the table only grows outward.
-    expect(after.left).toBe(before.left);
-    expect(after.top).toBe(before.top);
-    expect(after.width).toBeGreaterThan(before.width);
-    expect(after.height).toBeGreaterThan(before.height);
-    // Scaling is converted into real grid geometry, never left on the object.
-    expect(after.scaleX).toBe(1);
-    expect(after.scaleY).toBe(1);
-    expect(after.colSum).toBe(after.width);
-    expect(after.rowSum).toBe(after.height);
-  });
-
-  test("dragging the bottom-left corner still keeps the top-left pinned", async ({
-    page,
-  }) => {
-    const P = await openWith(page, FIXTURE);
-    await drawTable(page, P, [150, 250], [550, 450]);
-    const before = await tableState(page);
-
-    const corner = await P(before.left, before.top + before.height);
-    await page.mouse.move(corner.x, corner.y);
-    await page.waitForTimeout(150);
-    await page.mouse.down();
-    await page.waitForTimeout(120);
-    await page.mouse.move(corner.x - 80, corner.y, { steps: 12 });
-    await page.waitForTimeout(120);
-    await page.mouse.up();
-    await page.waitForTimeout(400);
-
-    const after = await tableState(page);
-    // Pulling a left handle outward must not drag the whole table left.
-    expect(after.left).toBe(before.left);
-    expect(after.top).toBe(before.top);
-    expect(after.width).toBeGreaterThan(before.width);
-    expect(after.scaleX).toBe(1);
-  });
-
   test("a table's content is painted from its centre, matching Fabric's origin", async ({
     page,
   }) => {
@@ -1048,4 +996,107 @@ test.describe("Dialogs and table editing", () => {
     expect(check.svgFirst![2]).toBeCloseTo(check.colWidths[0]!, 3);
   });
 
+/**
+   * The eight Fabric scale controls, with the drag direction that pulls each
+   * one outward: `dx`/`dy` are doubled so the move is far enough to clear the
+   * control's hit area and register as a real gesture.
+   */
+  const HANDLES = [
+    { name: "top-left", fx: 0, fy: 0, dx: -40, dy: -40 },
+    { name: "top", fx: 0.5, fy: 0, dx: 0, dy: -40 },
+    { name: "top-right", fx: 1, fy: 0, dx: 40, dy: -40 },
+    { name: "left", fx: 0, fy: 0.5, dx: -40, dy: 0 },
+    { name: "right", fx: 1, fy: 0.5, dx: 40, dy: 0 },
+    { name: "bottom-left", fx: 0, fy: 1, dx: -40, dy: 40 },
+    { name: "bottom", fx: 0.5, fy: 1, dx: 0, dy: 40 },
+    { name: "bottom-right", fx: 1, fy: 1, dx: 40, dy: 40 },
+  ] as const;
+
+  for (const handle of HANDLES) {
+    test(`the ${handle.name} handle keeps the top-left pinned and stays proportional`, async ({
+      page,
+    }) => {
+      const P = await openWith(page, FIXTURE);
+      await drawTable(page, P, [150, 250], [550, 450], 3, 3);
+      const before = await tableState(page);
+
+      // Handles sit at fractions of the table box; the drag then moves further
+      // out along the same direction, so every handle grows the table.
+      const grip = await P(
+        before.left + handle.fx * before.width,
+        before.top + handle.fy * before.height,
+      );
+      await page.mouse.move(grip.x, grip.y);
+      await page.waitForTimeout(150);
+      await page.mouse.down();
+      await page.waitForTimeout(120);
+      await page.mouse.move(grip.x + handle.dx * 2, grip.y + handle.dy * 2, {
+        steps: 12,
+      });
+      await page.waitForTimeout(120);
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+
+      const after = await tableState(page);
+
+      // The pinned corner must not have moved at all.
+      expect(after.left).toBe(before.left);
+      expect(after.top).toBe(before.top);
+      // Scaling is converted into real grid geometry, never left on the object.
+      expect(after.scaleX).toBe(1);
+      expect(after.scaleY).toBe(1);
+      expect(after.colSum).toBe(after.width);
+      expect(after.rowSum).toBe(after.height);
+
+      // The drag is applied in screen pixels but the table lives in scene
+      // units, so the ask is `dx * 2 / zoom` scene units. A handle on the
+      // left or right drives x, one on the top or bottom drives y, and a
+      // corner drives both. The growth is the distance, not the signed delta:
+      // the gesture already turned the pointer's direction into a per-axis
+      // sign at mouse-down, so pulling left grows the table just as pulling
+      // right does.
+      //
+      // This is the assertion that catches a compounding drag: the old
+      // handler multiplied the already-resized widths by Fabric's scaleX on
+      // every event, so the ask of ~130 scene units landed anywhere from
+      // ~7 to ~910 off. Measured residual on the fixed code is 0.17, so +/-2
+      // leaves an order of magnitude of headroom over the noise while still
+      // sitting far below the smallest observed bug (7.8 on the right
+      // handle). The noise is tableState's Math.round plus the integer
+      // clientX/clientY that MouseEvent forces on the delivered pointer.
+      const wantX = (Math.abs(handle.dx) * 2) / before.zoom;
+      const wantY = (Math.abs(handle.dy) * 2) / before.zoom;
+      if (handle.fx !== 0.5) {
+        expect(after.width).not.toBe(before.width);
+        expect(Math.abs(after.width - before.width - wantX)).toBeLessThanOrEqual(2);
+      } else {
+        // Not driven, so it must hold still. The gesture still computes a
+        // target for this axis on every event, so allow a little jitter.
+        // Measured: exactly 0 on all eight handles.
+        expect(Math.abs(after.width - before.width)).toBeLessThanOrEqual(4);
+      }
+      if (handle.fy !== 0.5) {
+        expect(after.height).not.toBe(before.height);
+        expect(
+          Math.abs(after.height - before.height - wantY),
+        ).toBeLessThanOrEqual(2);
+      } else {
+        expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(4);
+      }
+
+      // Every column keeps its share of the total. Note this does *not*
+      // catch a compounding drag: against the old handler the largest share
+      // drift was 0.005, well inside toBeCloseTo's 0.05, so all eight cases
+      // pass here even when the resize is badly wrong. Integer rounding of a
+      // 3-column grid already costs the fixed code 0.001, so no single
+      // toBeCloseTo precision separates the two. It is kept as a guard on
+      // the remainder distribution, which the magnitude check cannot see.
+      for (let i = 0; i < before.colWidths.length; i++) {
+        expect(before.colWidths[i]! / before.colSum).toBeCloseTo(
+          after.colWidths[i]! / after.colSum,
+          1,
+        );
+      }
+    });
+  }
 });
