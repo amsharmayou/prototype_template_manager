@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+/* Dense editor chrome: keep scrollbars thin so the 3-pane layout stays readable */
+.editor-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(163 163 163) transparent;
+}
+.editor-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.editor-scroll::-webkit-scrollbar-thumb {
+  background-color: rgb(163 163 163);
+  border-radius: 4px;
+}
+.editor-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Numeric inputs in the properties panel: hide spinners, they are too wide */
+.num-input::-webkit-outer-spin-button,
+.num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.num-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+input[type="range"].tight-range {
+  height: 1rem;
+}
+input[type="range"].tight-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 0.85rem;
+  width: 0.85rem;
+  border-radius: 9999px;
+  background: rgb(37 99 235);
+  cursor: pointer;
+}
+input[type="range"].tight-range::-webkit-slider-runnable-track {
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: rgb(212 212 212);
+}
+input[type="range"].tight-range::-moz-range-thumb {
+  height: 0.85rem;
+  width: 0.85rem;
+  border: none;
+  border-radius: 9999px;
+  background: rgb(37 99 235);
+  cursor: pointer;
+}
+input[type="range"].tight-range::-moz-range-track {
+  height: 0.25rem;
+  border-radius: 9999px;
+  background: rgb(212 212 212);
+}
