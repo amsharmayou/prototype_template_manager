@@ -703,9 +703,13 @@ Replace the whole `if (appType === "table") { ... }` block with:
     if (appType === "table") {
       // A table is resized by changing its column widths, never by scaling,
       // so that the grid stays exact. The target size comes from the pointer's
-      // displacement since mouse-down, not from Fabric's scaleX: the drag's
-      // scale is computed against the size captured at gesture start, so
-      // multiplying the current widths by it compounds on every event.
+      // displacement since mouse-down, not from Fabric's scaleX: fabric derives
+      // that scale as a fixed numerator over a live denominator
+      // (`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where
+      // `distance` and `original.scaleX` are captured at mouse-down but `dim` is
+      // `target._getTransformedDimensions()` read fresh each move). A table that
+      // grows its own width mid-drag therefore gets a different divisor on every
+      // event, and multiplying the current widths by the result compounds.
       const table = target as BillTable;
       const gesture = table.resizeGesture;
       const p = this.resolveScenePoint(opt.e);
@@ -763,10 +767,12 @@ ones fail and by how much before continuing.
 git add lib/canvas/EditorController.ts
 git commit -m "fix(canvas): derive table resize from the pointer, not scaleX
 
-Fabric computes a drag's scale against the size captured at mouse-down, so
-applying it to the already-resized widths compounds on every event and the
-table races away from the handle. Take the target size from the pointer's
-displacement since mouse-down and resolve the grid from the gesture snapshot."
+Fabric derives a corner drag's scale as a fixed numerator over a live denominator:
+`distance` and `original.scaleX` are captured at mouse-down, but the divisor uses
+`target._getTransformedDimensions()` read fresh on every move. Applying it to
+already-resized widths therefore compounds on every event and the table races away
+from the handle. Take the target size from the pointer's displacement since
+mouse-down and resolve the grid from the gesture snapshot."
 ```
 
 ---
@@ -922,11 +928,14 @@ factor, which is what keeps the grid exact through JSON, SVG, PDF and DOCX.
 
 - [ ] **Step 2: Add the failure mode to the findings section**
 
-In the Fabric 7 findings, add that Fabric computes a drag's `scaleX` against
-the object size captured at `mouse:down`, so an object that mutates its own
-`width` mid-drag and resets `scaleX` compounds the factor on every event. The
-fix is to derive the target from the pointer and resolve from a snapshot taken
-at gesture start.
+In the Fabric 7 findings, add that Fabric derives a corner drag's scale as a fixed numerator over a live denominator:
+`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where `distance` and
+`original.scaleX` are captured at `mouse:down` but `dim` is
+`target._getTransformedDimensions()` read fresh on every move. An object that
+mutates its own width mid-drag and resets `scaleX` therefore gets a different
+divisor each event, and applying the factor to the current widths compounds. The
+fix is to derive the target from the pointer and resolve from a snapshot taken at
+gesture start.
 
 - [ ] **Step 3: Verify the docs build and commit**
 

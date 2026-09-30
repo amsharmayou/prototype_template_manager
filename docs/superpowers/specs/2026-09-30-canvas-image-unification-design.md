@@ -196,14 +196,30 @@ table.set({ scaleX: 1, scaleY: 1 })
 ```
 
 `scaleColWidths` is itself correctly proportional, so it is not the culprit. The
-bug is that Fabric computes `scaleX` relative to the object's size captured at
-**drag start**, while the handler applies the factor to the table's **current**
-widths and then resets `scaleX` to 1. Every `object:scaling` event therefore
-compounds: after *n* events the grid is `start × factorⁿ`. A fast drag
-overshoots, the pointer catches up, and the table oscillates. `scaleColWidths`
-then dumps the accumulated rounding remainder into whichever column is widest,
-which is why one column — the one that has been fed the most excess — appears
+bug is that Fabric's corner-drag scale is a **fixed numerator over a live
+denominator**. `scaleObject` computes it as
+
+```
+scale = distance / (|dim.x * original.scaleX / target.scaleX|
+                  + |dim.y * original.scaleY / target.scaleY|)
+scaleX = original.scaleX * scale
+```
+
+where `distance` and `original.scaleX` are captured once at `mouse:down`, but
+`dim` is `target._getTransformedDimensions()` — read **fresh on every move**. The
+handler applies that factor to the table's **current** widths, grows the table,
+resets `scaleX` to 1, and `syncDimensions()` rewrites `width`. The next event
+therefore divides by a *different, already-grown* size. Every `object:scaling`
+event compounds, so after *n* events the grid approaches `start × factorⁿ`. A fast
+drag overshoots, the pointer catches up, and the table oscillates.
+`scaleColWidths` then dumps the accumulated rounding remainder into whichever
+column is widest, which is why one column — the one fed the most excess — appears
 extreme.
+
+Measured on the fixed code, for contrast: a pointer asked for a scene delta of
++120x/+80y produced exactly +120.155/+81.186, column spread 1px, row spread 0.
+The pre-fix code turned the same drag into +296 (about 2.47× the ask) with columns
+`[236, 236, 225]`.
 
 ### Fix
 
