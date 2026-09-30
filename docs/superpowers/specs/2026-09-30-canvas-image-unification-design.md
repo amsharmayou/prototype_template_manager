@@ -196,8 +196,8 @@ table.set({ scaleX: 1, scaleY: 1 })
 ```
 
 `scaleColWidths` is itself correctly proportional, so it is not the culprit. The
-bug is that Fabric's corner-drag scale is a **fixed numerator over a live
-denominator**. `scaleObject` computes it as
+bug is that **neither side of Fabric's corner-drag scale ratio is a constant**, so
+the factor moves on every event. `scaleObject` computes it as
 
 ```
 scale = distance / (|dim.x * original.scaleX / target.scaleX|
@@ -205,13 +205,20 @@ scale = distance / (|dim.x * original.scaleX / target.scaleX|
 scaleX = original.scaleX * scale
 ```
 
-where `distance` and `original.scaleX` are captured once at `mouse:down`, but
-`dim` is `target._getTransformedDimensions()` — read **fresh on every move**. The
-handler applies that factor to the table's **current** widths, grows the table,
-resets `scaleX` to 1, and `syncDimensions()` rewrites `width`. The next event
-therefore divides by a *different, already-grown* size. Every `object:scaling`
-event compounds, so after *n* events the grid approaches `start × factorⁿ`. A fast
-drag overshoots, the pointer catches up, and the table oscillates.
+`getLocalPoint` normalizes the **live** pointer `(x, y)` — documented as "current
+mouse x position, canvas normalized" — against the origin captured at `mouse:down`,
+so `distance` moves on every move. `dim` is `target._getTransformedDimensions()`,
+which reads `scaleX`/`scaleY`/`width`/`height` off the object, so it moves too.
+In that formula the only mouse-down quantities are `original.scaleX`/
+`original.scaleY` and the origin the pointer is measured from.
+
+The consequence is that the factor is not a stable multiplier: the object grows
+underneath a pointer the user is holding still, the handler is what grows it, and
+so Fabric is handed a *different divisor on the very next event*. The handler
+applied that factor to the table's **current** widths, grew the table, reset
+`scaleX` to 1, and `syncDimensions()` rewrote `width`. Every `object:scaling` event
+compounds, so after *n* events the grid approaches `start × factorⁿ`. A fast drag
+overshoots, the pointer catches up, and the table oscillates.
 `scaleColWidths` then dumps the accumulated rounding remainder into whichever
 column is widest, which is why one column — the one fed the most excess — appears
 extreme.
@@ -229,18 +236,20 @@ instead, and always resolve from a snapshot taken at gesture start.
 `BillTable` gains:
 
 ```ts
-beginResizeGesture(startPointer: {x,y}, startWidth: number, startHeight: number,
-                   anchor: {left, top}): void
+beginResizeGesture(startPointer: {x, y}): void
 resizeColumnsTo(targetWidth: number): void
 resizeRowsTo(targetHeight: number): void
 endResizeGesture(): void
 ```
 
-The gesture record holds `colWidths`/`rowHeights` snapshots, the start totals,
-the start pointer, and a `signX`/`signY` of `+1` or `-1` per axis. The sign is
-`+1` when the pointer started in the right/bottom half of the table box and `-1`
-when it started in the left/top half, so every handle resizes away from the
-pinned top-left and no Fabric-internal handle identity is needed.
+This is the shipped signature. The gesture record holds `colWidths`/`rowHeights`
+snapshots, the start totals, the start pointer, and a `signX`/`signY` of `+1` or
+`-1` per axis. The start totals and the pinned anchor are derived inside
+`beginResizeGesture` from the table itself and kept by the controller
+(`gestureAnchor`), so the call takes only the pointer. The sign is `+1` when the
+pointer started in the right/bottom half of the table box and `-1` when it started
+in the left/top half, so every handle resizes away from the pinned top-left and no
+Fabric-internal handle identity is needed.
 
 `resizeColumnsTo(target)` scales `snapshot × target` proportionally via
 `scaleColWidths`, clamped so the total never drops below
@@ -256,8 +265,10 @@ table, and moving it back right shrinks it.
 `opt.scenePoint`; it also starts the gesture when the target is a table. The
 `object:scaling` payload is `{ target, transform, e }` and has no
 `scenePoint`, so the handler derives one with `canvas.getScenePoint(opt.e)`. If
-`opt.e` is absent the handler falls back to the previous event's scale, which
-keeps the behaviour sane for synthetic events but is not the primary path.
+`opt.e` is absent — or yields a non-finite point, as a synthetic event can — the
+handler falls back to `lastKnownScenePoint`, the most recent scene point cached
+from any mouse event. That is a *position* fallback, not a scale fallback, so it
+keeps the same pointer-derived target.
 
 `onObjectScaling` for a table becomes:
 
@@ -284,6 +295,16 @@ Properties this gives us:
   either axis is written, which is what the previous code had to special-case.
 
 `object:modified` ends the gesture.
+
+`canvasDefaults.altActionKey` is `shiftKey`, so Shift on `ml`/`mr`/`mt`/`mb`
+routes to Fabric's skew handlers instead of the scale handlers, and
+`object:scaling` never fires. The four corners are unaffected — their
+`actionHandler` is `scalingEqually` and carries no `getActionName`, so they always
+scale. A table can express neither skew nor a scale, so `object:skewing` is
+subscribed for tables and zeroes `skewX`/`skewY`/`scaleX`/`scaleY`: the serialiser
+records `angle` but not skew, so a sheared table would come back un-sheared on
+reload, and `skewObject` inflates `scaleX` to compensate for a skewed `skewX`.
+The Shift+side-handle drag therefore resizes nothing.
 
 ### Largest-remainder distribution
 

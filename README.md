@@ -246,24 +246,34 @@ These cost real debugging time and are load-bearing for anyone extending this:
    origin directly (the first `<rect>` in `_toSVG`), which is exact.
 
 9. **A drag's `scaleX` is not a stable factor to multiply by.** Fabric
-   recomputes it on every `object:scaling` as the pointer's position inside the
-   transform captured at `mouse:down`, divided by the object's *current*
-   transformed width — `|newPoint.x * target.scaleX / dim.x` in `scaleObject`,
-   with `dim` read live off the object. That is the axis branch, which the four
-   edge handles always take and the corners take only when uniform scaling is
-   toggled off with Shift. A plain corner drag takes the other branch:
-   `canvasDefaults.uniformScaling` is `true`, so `scaleIsProportional` reports
-   true unless Shift is held, and that branch likewise divides a
-   `mouse:down`-captured distance by that same live `dim`. So an object that
-   rewrites its own `width` mid-drag and resets `scaleX` to 1 is feeding a
-   moving denominator into a fixed-numerator ratio: the number changes on every
-   event, and re-applying it to the already-resized widths compounds, which is
-   how a drag asking for ~130 scene units could miss by anywhere from ~7 to
-   ~910. The fix is that the drag path never reads `scaleX`: it derives the
-   target size from the pointer's displacement since `mouse:down` and resolves
-   the column geometry from a snapshot taken when the gesture began, so
-   re-applying the same absolute target is a no-op rather than one more
-   multiplication.
+   recomputes it on every `object:scaling`, and *neither side of the ratio is a
+   constant*. Its two branches differ only in how the numerator is formed, and
+   both numerators are live:
+
+   - The **axis** branch, `|newPoint.x * target.scaleX / dim.x|`, taken by the
+     four edge midpoints and by the corners under Shift.
+   - The **proportional** branch,
+     `distance / (|dim.x * original.scaleX / target.scaleX| + |dim.y *
+     original.scaleY / target.scaleY|)`, taken by a plain corner drag:
+     `canvasDefaults.uniformScaling` is `true` and `uniScaleKey` is `shiftKey`,
+     so `scaleIsProportional` reduces to `!shiftKey`.
+
+   `newPoint` comes from `getLocalPoint`, which normalizes the pointer position
+   the handler was just called with — "current mouse x/y position, canvas
+   normalized" — against the origin captured at `mouse:down`. `dim` is
+   `target._getTransformedDimensions()`, which reads `scaleX`, `scaleY`, `width`
+   and `height` off the object. In that formula the only mouse-down quantities are
+   `original.scaleX`/`original.scaleY` and the origin the pointer is measured
+   from. So an object that grows its own `width`
+   mid-drag is handed a different divisor on the very next event: the number
+   changes every time, and re-applying it to the already-resized widths
+   compounds. That is how one measured drag asking for ~130 document units — the
+   ask at the E2E suite's own viewport and zoom, not a property of the bug —
+   landed anywhere from ~7 to ~910 off. The fix is that the drag path never
+   reads `scaleX`: it derives the target size from the pointer's displacement
+   since `mouse:down` and resolves the column geometry from a snapshot taken
+   when the gesture began, so re-applying the same absolute target is a no-op
+   rather than one more multiplication.
 
 ---
 
@@ -342,7 +352,7 @@ imports it directly rather than going through `@eslint/eslintrc`.
 ## Testing
 
 ```bash
-npm test        # 88 unit tests over the pure layer and the table resize gesture
+npm test        # 89 unit tests over the pure layer and the table resize gesture
 npm run test:e2e
 ```
 
@@ -424,32 +434,37 @@ unaffected, so the traced template stays registered to the image at any zoom.
 ## Resizing a table
 
 A table's shape is **real geometry, not a scale factor**. `colWidths` and
-`rowHeights` are the authoritative layout, `width` and `height` are only their
-sums, and `scaleX`/`scaleY` are held at 1. That is what keeps the grid exact in
-the JSON, SVG and PDF exports — JSON stores the real widths, and SVG and PDF
-draw the gridlines at them — and it is why a resize has to be expressed as new
-widths rather than as a scale. DOCX carries those same numbers as native Word
-column widths and row heights, subject to the flow-approximation caveat
-described above.
+`rowHeights` are the authoritative layout, `width` and `height` are their sums
+(every path that changes the grid re-derives them, including the generic
+Width/Height fields in the properties panel, which route through the same
+resize call rather than setting `width` directly), and `scaleX`/`scaleY` are held
+at 1. That is what keeps the grid exact in the JSON, SVG and PDF exports — JSON
+stores the real widths, and SVG and PDF draw the gridlines at them — and it is why
+a resize has to be expressed as new widths rather than as a scale. DOCX carries
+those same numbers as native Word column widths and row heights, subject to the
+flow-approximation caveat described above.
 
 - **Drag any of the eight scale handles** — the four corners and the four edge
-  midpoints. Every one of them resizes *away from a pinned top-left*: `left` and
-  `top` are captured when the handle is grabbed and re-asserted on every
-  pointer-move, so the top-left corner never moves. The table is always the
-  region right and below that corner — it can grow or shrink, but its origin
-  cannot move. Which way you pull does not matter — dragging the top-left handle
-  up and left grows the table just as dragging the bottom-right handle down and
-  right does.
-- **Every column and row keeps its share of the total.** The new total is
+  midpoints. Every one of them resizes *away from a pinned top-left*, as long as
+  the table is not rotated: `left` and `top` are captured when the handle is
+  grabbed and re-asserted on every pointer-move, so the top-left corner never
+  moves. The table is always the region right and below that corner — it can grow
+  or shrink, but its origin cannot move. Which way you pull does not matter —
+  dragging the top-left handle up and left grows the table just as dragging the
+  bottom-right handle down and right does.
+- **Every column and row keeps its share of its own axis.** Each axis is resized
+  from a target derived independently, and the new total for that axis is
   distributed across the existing sizes with the rounding remainder handed to
-  whichever columns lost most to flooring, so no single column absorbs the
+  whichever entries lost most to flooring, so no single column absorbs the
   leftover pixel and the proportions survive as closely as integers allow. A
   column cannot go below 8px, nor a row below 8px, so a drag cannot collapse
-  the grid.
+  the grid. Columns get one factor and rows another, so the two axes are not
+  forced to move together; an edge handle drives one axis and holds the other.
 - **Or set values numerically** in the properties panel, one column or row at a
   time.
 
-Both paths leave `left`/`top` untouched and keep `scaleX`/`scaleY` at 1.
+The drag path and the numeric path both leave `left`/`top` untouched and keep
+`scaleX`/`scaleY` at 1.
 
 ## Dialogs
 
@@ -488,8 +503,25 @@ Shortcuts are suppressed while typing in a field or editing text.
 - **DOCX is a flow approximation**, as described above. Vertical rules become
   right-bordered spacers and rectangles become bordered paragraphs.
 - **Per-column table resizing by dragging** is not implemented; a handle drag
-  resizes every column and row by the same factor. Set individual widths and
+  rescales every column proportionally and every row proportionally, each axis
+  taking its own factor from its own target size. Set individual widths and
   heights numerically in the properties panel.
+- **A rotated table resizes the axis you are not dragging.** The per-axis
+  direction comes from half-plane-testing the pointer against the table's
+  *unrotated* centre, and each target size is the pointer's travel in document
+  units, so the handle you grab does not select the axis that follows it once the
+  table is rotated.
+  This is a regression from before proportional resizing, where the factor came
+  from Fabric in the object's own frame and so at least resized the dragged axis.
+  Rotating is available in the properties panel, so treat a rotated table as
+  unsupported for handle drags.
+- **Shift + drag on an edge handle does nothing.** Fabric's `altActionKey` is
+  `shiftKey`, so Shift turns the four edge midpoints into *skew* handles and
+  `object:scaling` never fires. A table can express neither skew nor a scale, and
+  skew is not saved, so the drag is refused outright rather than shearing a table
+  that would come back un-sheared on reload. The four corners are unaffected, but
+  Shift does change them: they then take the axis branch too, so the two axes are
+  derived independently instead of being locked to one proportional factor.
 - **Text vertical alignment** is stored but not yet honoured on canvas or in
   exports.
 - **No persistence beyond explicit Save/Load.** No autosave, no project

@@ -703,13 +703,12 @@ Replace the whole `if (appType === "table") { ... }` block with:
     if (appType === "table") {
       // A table is resized by changing its column widths, never by scaling,
       // so that the grid stays exact. The target size comes from the pointer's
-      // displacement since mouse-down, not from Fabric's scaleX: fabric derives
-      // that scale as a fixed numerator over a live denominator
-      // (`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where
-      // `distance` and `original.scaleX` are captured at mouse-down but `dim` is
-      // `target._getTransformedDimensions()` read fresh each move). A table that
-      // grows its own width mid-drag therefore gets a different divisor on every
-      // event, and multiplying the current widths by the result compounds.
+      // displacement since mouse-down rather than from Fabric's scaleX: fabric
+      // rebuilds that scale on every event as the live pointer position read
+      // against the mouse-down origin, over the object's live transformed size,
+      // so a table that grows its own width mid-drag hands fabric a different
+      // divisor every event, and multiplying the current widths by the result
+      // compounds.
       const table = target as BillTable;
       const gesture = table.resizeGesture;
       const p = this.resolveScenePoint(opt.e);
@@ -767,11 +766,15 @@ ones fail and by how much before continuing.
 git add lib/canvas/EditorController.ts
 git commit -m "fix(canvas): derive table resize from the pointer, not scaleX
 
-Fabric derives a corner drag's scale as a fixed numerator over a live denominator:
-`distance` and `original.scaleX` are captured at mouse-down, but the divisor uses
-`target._getTransformedDimensions()` read fresh on every move. Applying it to
-already-resized widths therefore compounds on every event and the table races away
-from the handle. Take the target size from the pointer's displacement since
+Neither side of Fabric's corner-drag scale ratio is a constant: the numerator is
+the live pointer position normalized against the mouse-down origin, and the divisor
+uses `target._getTransformedDimensions()` read fresh on every move, so the only
+mouse-down quantities in the formula are `original.scaleX`/`scaleY` and the origin
+the pointer is measured from. The object
+therefore grows underneath a pointer the user is holding still, and the handler is
+what grows it, so Fabric is handed a different divisor on every event. Applying
+that factor to already-resized widths compounds on each event and the table races
+away from the handle. Take the target size from the pointer's displacement since
 mouse-down and resolve the grid from the gesture snapshot."
 ```
 
@@ -928,14 +931,16 @@ factor, which is what keeps the grid exact through JSON, SVG, PDF and DOCX.
 
 - [ ] **Step 2: Add the failure mode to the findings section**
 
-In the Fabric 7 findings, add that Fabric derives a corner drag's scale as a fixed numerator over a live denominator:
-`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where `distance` and
-`original.scaleX` are captured at `mouse:down` but `dim` is
-`target._getTransformedDimensions()` read fresh on every move. An object that
-mutates its own width mid-drag and resets `scaleX` therefore gets a different
-divisor each event, and applying the factor to the current widths compounds. The
-fix is to derive the target from the pointer and resolve from a snapshot taken at
-gesture start.
+In the Fabric 7 findings, add that neither side of Fabric's corner-drag scale ratio
+is a constant:
+`distance / (dim.x * original.scaleX / target.scaleX + ...)`, where `distance` is
+the live pointer position normalized against the origin captured at `mouse:down`,
+and `dim` is `target._getTransformedDimensions()` read fresh on every move. The only
+mouse-down quantities in that formula are `original.scaleX`/`scaleY` and the origin
+the pointer is measured from. An object that mutates its
+own width mid-drag therefore gets a different divisor each event, and applying the
+factor to the current widths compounds. The fix is to derive the target from the
+pointer and resolve from a snapshot taken at gesture start.
 
 - [ ] **Step 3: Verify the docs build and commit**
 
