@@ -598,21 +598,22 @@ export class EditorController {
     if (!canvas) return;
     const p = opt.scenePoint;
 
-    // The resize snapshot opens before the pan bail. Fabric's Alt gesture is a
-    // centred scale that still fires `object:scaling`, and a table that reaches
-    // the scaling handler without a gesture falls back to multiplying its
-    // already-resized widths by Fabric's scale, which compounds every event.
+    // A resize gesture and the anchor that pins it are armed together, above
+    // the pan bail, because Fabric's Alt gesture is a *centred* scale that still
+    // fires `object:scaling`: without a gesture the table falls back to
+    // multiplying its already-resized widths by Fabric's scale, which compounds
+    // every event, and without the anchor the handler has nothing to re-pin, so
+    // the table walks off-canvas instead of growing from its top-left.
     if (opt.target instanceof BillTable) {
       opt.target.beginResizeGesture({ x: p.x, y: p.y });
     }
-    if (this.spaceHeld || opt.e?.altKey) return;
-
     // Remember where the object sat before the gesture, so a resize can pin
     // its top-left corner instead of letting it drift.
     this.gestureAnchor = opt.target
       ? { left: opt.target.left ?? 0, top: opt.target.top ?? 0 }
       : null;
     this.lastKnownScenePoint = { x: p.x, y: p.y };
+    if (this.spaceHeld || opt.e?.altKey) return;
 
     const tool = this.state.tool;
     if (tool === "select") return;
