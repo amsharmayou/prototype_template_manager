@@ -1,16 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 import type { EditorController } from "@/lib/canvas/EditorController";
 
 /**
  * Hosts the Fabric canvas plus the inline cell editor.
  *
- * The stage is a native scroll container: the canvas element is sized to
- * `document * zoom`, so a page taller than the pane simply scrolls, and a page
- * that fits is centred. Nothing here implements scrolling itself, which keeps
- * scrolling, the grid overlay and the cell editor in agreement.
+ * The stage no longer scrolls: the canvas fills it, and panning and zooming
+ * are an affine viewport transform applied to the scene (and, because Fabric
+ * renders the reference as `backgroundImage`, to the bill image as well).
+ * Overlays — grid and the document bounds — are positioned from that same
+ * view state, so every layer moves as one surface.
  */
 export default function CanvasStage({
   controller,
@@ -30,7 +31,6 @@ export default function CanvasStage({
   const stageRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const [pane, setPane] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -46,12 +46,8 @@ export default function CanvasStage({
     if (!stage) return;
     controller.setStageElement(stage);
     const observer = new ResizeObserver(() => {
-      setPane({ width: stage.clientWidth, height: stage.clientHeight });
       if (stage.clientWidth > 0) {
-        controller.setViewportSize(
-          Math.max(120, stage.clientWidth - 48),
-          Math.max(120, stage.clientHeight - 48),
-        );
+        controller.setViewportSize(stage.clientWidth, stage.clientHeight);
       }
     });
     observer.observe(stage);
@@ -63,9 +59,9 @@ export default function CanvasStage({
 
   // Drag to pan. Handled here, in screen coordinates, because panning is a
   // viewport concern and must not be mixed up with Fabric's scene points.
-  // Captured on the stage so Fabric never sees the gesture. Move and release
-  // are tracked on the window: `setPointerCapture` makes Chromium scroll the
-  // element into view, which would jump the view on pointer down.
+  // Move and release are tracked on the window, and the pointer delta maps
+  // directly onto the viewport translation: dragging right moves the page
+  // right, exactly like grabbing a sheet of paper.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -75,8 +71,7 @@ export default function CanvasStage({
 
     const onMove = (e: PointerEvent) => {
       if (!dragging || !last) return;
-      stage.scrollLeft -= e.clientX - last.x;
-      stage.scrollTop -= e.clientY - last.y;
+      controller.panBy(e.clientX - last.x, e.clientY - last.y);
       last = { x: e.clientX, y: e.clientY };
       e.preventDefault();
     };
@@ -110,37 +105,72 @@ export default function CanvasStage({
     };
   }, [controller]);
 
-  // The page is the boundary: only inset it while it fits, so scrolling can
-  // never reveal empty space beyond the image's edge.
-  const pageW = documentSize.width * zoom;
-  const pageH = documentSize.height * zoom;
-  const fits = pageW + 48 <= pane.width && pageH + 48 <= pane.height;
-  const pad = fits ? 24 : 0;
+  const state = controller.getSnapshot();
 
   return (
     <div
       ref={stageRef}
       data-btm-stage="canvas"
-      className="editor-scroll relative flex-1 overflow-auto bg-neutral-200"
+      className="editor-scroll relative flex-1 overflow-hidden bg-neutral-200"
     >
-      <div className="flex min-h-full min-w-full">
-        <div className="m-auto shrink-0" style={{ padding: pad }}>
-          <div
-            className="relative shadow-lg ring-1 ring-neutral-300"
-            style={
-              gridVisible
-                ? {
-                    backgroundImage:
-                      "linear-gradient(to right, rgba(37,99,235,0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(37,99,235,0.16) 1px, transparent 1px)",
-                    backgroundSize: `${gridSize * zoom}px ${gridSize * zoom}px`,
-                  }
-                : undefined
-            }
-          >
-            <canvas ref={canvasRef} />
-          </div>
+      <canvas ref={canvasRef} />
+
+      {/* Grid overlay: one sibling layer exactly over the canvas, offset by
+          the same viewport translation, so the grid never drifts from the
+          traced objects it is a guide for. */}
+      {gridVisible ? (
+        <div
+          className="pointer-events-none absolute inset-0"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, rgba(37,99,235,0.16) 1px, transparent 1px), linear-gradient(to bottom, rgba(37,99,235,0.16) 1px, transparent 1px)",
+            backgroundSize: `${gridSize * zoom}px ${gridSize * zoom}px`,
+            backgroundPosition: `${state.tx}px ${state.ty}px`,
+          }}
+        />
+      ) : null}
+
+      {/* Snap guides: same overlay layer as the grid, also positioned from the
+          view state so a guide always sits on the geometry it announces. */}
+      {state.snaps.length > 0 ? (
+        <div className="pointer-events-none absolute inset-0">
+          {state.snaps.map((s, i) =>
+            s.axis === "y" ? (
+              <div
+                key={`h${i}`}
+                className="absolute inset-x-0"
+                style={{
+                  top: s.pos * state.zoom + state.ty,
+                  borderTop: "1px solid rgba(37,99,235,0.6)",
+                }}
+              />
+            ) : (
+              <div
+                key={`v${i}`}
+                className="absolute inset-y-0"
+                style={{
+                  left: s.pos * state.zoom + state.tx,
+                  borderLeft: "1px solid rgba(37,99,235,0.6)",
+                }}
+              />
+            ),
+          )}
         </div>
-      </div>
+      ) : null}
+
+      {/* Document bounds: a plain ring + shadow drawn from the view state,
+          pointer-transparent, so panning the page moves its edge with it. */}
+      <div
+        className="pointer-events-none absolute"
+        style={{
+          left: state.tx,
+          top: state.ty,
+          width: documentSize.width * zoom,
+          height: documentSize.height * zoom,
+          boxShadow:
+            "0 0 0 1px rgba(0,0,0,0.18), 0 12px 32px rgba(0,0,0,0.16)",
+        }}
+      />
 
       {editingCell ? (
         <CellEditor controller={controller} textareaRef={textareaRef} />
@@ -151,7 +181,7 @@ export default function CanvasStage({
 
 /**
  * Inline cell editor. Positioned `fixed` from the canvas's viewport rect so it
- * stays glued to its cell while the stage is scrolled.
+ * stays glued to its cell wherever the view has panned or zoomed to.
  */
 function CellEditor({
   controller,
@@ -174,8 +204,12 @@ function CellEditor({
   const cell = table.getCell(row, col);
 
   const canvasRect = canvas?.upperCanvasEl?.getBoundingClientRect();
-  const left = (canvasRect?.left ?? 0) + (table.left ?? 0) * state.zoom;
-  const top = (canvasRect?.top ?? 0) + (table.top ?? 0) * state.zoom;
+  const projected = controller.projectToScreen({
+    x: table.left ?? 0,
+    y: table.top ?? 0,
+  });
+  const left = (canvasRect?.left ?? 0) + projected.x + (colStart + table.padding) * state.zoom;
+  const top = (canvasRect?.top ?? 0) + projected.y + (rowStart + table.padding) * state.zoom;
 
   return (
     <textarea
@@ -199,8 +233,8 @@ function CellEditor({
       }}
       className="fixed resize-none rounded-sm border-2 border-blue-600 bg-white/95 p-1 text-xs text-neutral-900 outline-none"
       style={{
-        left: left + colStart * state.zoom + table.padding * state.zoom,
-        top: top + rowStart * state.zoom + table.padding * state.zoom,
+        left,
+        top,
         width: Math.max(24, (table.colWidths[col] ?? 0) * state.zoom - 4),
         height: Math.max(16, (table.rowHeights[row] ?? 0) * state.zoom - 2),
         fontSize: Math.max(9, cell.fontSize * state.zoom),

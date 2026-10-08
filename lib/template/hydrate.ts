@@ -19,12 +19,15 @@ import {
 } from "fabric";
 
 import { BillTable } from "@/lib/canvas/objects/BillTable";
+import { BillPartObject } from "@/lib/canvas/objects/BillPartObject";
+import { FieldObject, DEFAULT_FIELD } from "@/lib/canvas/objects/BillField";
 import { ImagePlaceholderObject } from "@/lib/canvas/objects/ImagePlaceholder";
 import { createId, registerAppProperties } from "@/lib/canvas/fabricSetup";
 import { evenSizes } from "@/lib/template/geometry";
 import { analysePlaceholders } from "@/lib/template/placeholders";
 import type {
   BillTemplate,
+  FieldObject as FieldObj,
   FreehandObject,
   GroupObject,
   ImagePlaceholderObject as PHObject,
@@ -35,6 +38,7 @@ import type {
   TemplateObject,
   TextObject,
 } from "@/lib/template/types";
+import type { BillPartObject as TemplateBillPart } from "@/lib/template/types";
 
 registerAppProperties();
 
@@ -78,9 +82,9 @@ function applyCommon<T extends FabricObject>(
   return obj;
 }
 
-function hydrateText(o: TextObject, zIndex: number): IText {
+function hydrateText(o: TextObject, zIndex: number): IText | Textbox {
   const info = analysePlaceholders(o.text);
-  const obj = new IText(o.text, {
+  const common = {
     left: o.x,
     top: o.y,
     fontFamily: o.fontFamily,
@@ -93,13 +97,37 @@ function hydrateText(o: TextObject, zIndex: number): IText {
     fill: o.fill === "transparent" ? "#000000" : o.fill,
     stroke: o.stroke,
     strokeWidth: o.strokeWidth,
-  });
+    // Re-apply the stretch the serialiser recorded. Without it a reloaded
+    // template would come back at its natural aspect, losing the side/down
+    // drag the author made.
+    scaleX: typeof o.scaleX === "number" && Number.isFinite(o.scaleX) ? o.scaleX : 1,
+    scaleY: typeof o.scaleY === "number" && Number.isFinite(o.scaleY) ? o.scaleY : 1,
+  };
+  // Only a `Textbox` treats `width` as a layout boundary, so a box that wraps
+  // has to be that class — an `IText` silently discards it. This is also why
+  // the properties panel's Width field did nothing for text, and why a wrap
+  // boundary could not survive a save/reload cycle.
+  const obj: IText | Textbox =
+    typeof o.wrapWidth === "number" && o.wrapWidth > 0
+      ? new Textbox(o.text, { ...common, width: o.wrapWidth })
+      : new IText(o.text, common);
   (obj as unknown as Record<string, unknown>).roleKind =
     o.roleKind === "variable" ? "variable" : info.roleKind;
   if (o.roleKind === "variable" && info.role && !o.role) {
     (obj as unknown as Record<string, unknown>).role = info.role;
   }
-  return applyCommon(obj, o, zIndex);
+  applyCommon(obj, o, zIndex);
+  // A wrapping box keeps its wrap boundary and the traced height as its
+  // starting height; Fabric recomputes the height from the wrapped lines as
+  // soon as the text or width changes. An auto-width `IText` is left alone:
+  // Fabric derives its width and height from the content, so writing them would
+  // only be discarded on the next layout pass.
+  if (obj instanceof Textbox) {
+    obj.set({ width: o.wrapWidth, height: o.height } as never);
+    (obj as unknown as Record<string, unknown>).wrapWidth = o.wrapWidth;
+  }
+  obj.setCoords();
+  return obj;
 }
 
 function hydrateShape(o: ShapeObject, zIndex: number): Rect | Ellipse {
@@ -117,7 +145,13 @@ function hydrateShape(o: ShapeObject, zIndex: number): Rect | Ellipse {
   // then break SVG export.
   const obj =
     o.type === "ellipse"
-      ? new Ellipse(base)
+      ? new Ellipse({
+          ...base,
+          // Fabric's Ellipse defaults to rx = ry = 0 and never back-derives
+          // them from width/height: it would paint nothing at any size.
+          rx: o.width / 2,
+          ry: o.height / 2,
+        })
       : new Rect({
           ...base,
           rx: o.type === "rounded-rect" ? o.cornerRadius || 8 : 0,
@@ -199,13 +233,101 @@ function hydrateTable(o: TableObject, zIndex: number): BillTable {
 function hydrateImagePlaceholder(
   o: PHObject,
   zIndex: number,
-): ImagePlaceholderObject {
+  images?: Map<string, FabricImage>,
+): FabricObject {
+  // A bound image replaces the dashed slot. Decoding is asynchronous, so the
+  // caller hands us an already-loaded registry: when the image never arrived
+  // (bad URL, offline) the placeholder box renders instead of nothing.
+  const src = typeof o.src === "string" ? o.src : undefined;
+  const loaded = src !== undefined ? images?.get(src) : undefined;
+  if (loaded) {
+    const obj = new FabricImage(loaded.getElement() as HTMLImageElement, {
+      left: o.x,
+      top: o.y,
+      originX: "left",
+      originY: "top",
+      scaleX: o.width / (loaded.width || 1),
+      scaleY: o.height / (loaded.height || 1),
+    });
+    // Carry the placeholder's identity on the image object so the serialiser
+    // round-trips a filled slot back to an image-placeholder with src.
+    const carried = obj as unknown as Record<string, unknown>;
+    carried.placeholderRole = o.placeholderRole;
+    carried.label = o.label;
+    carried.src = src;
+    return applyCommon(obj, o, zIndex);
+  }
   const obj = new ImagePlaceholderObject({
     placeholderRole: o.placeholderRole,
     label: o.label,
     borderColor: o.stroke,
     borderWidth: o.strokeWidth,
     fill: o.fill,
+  });
+  obj.set({
+    left: o.x,
+    top: o.y,
+    width: o.width,
+    height: o.height,
+    angle: o.rotation,
+    opacity: o.opacity,
+    visible: o.visible,
+  } as never);
+  return applyCommon(obj, o, zIndex);
+}
+
+function hydrateField(o: FieldObj, zIndex: number): FieldObject {
+  const obj = new FieldObject({
+    key: o.key,
+    fieldType: o.fieldType,
+    // The canvas label is the marker the author sees; the template carries the
+    // `{{key}}` text it stands for, and the two are not interchangeable.
+    label: o.text || `{{${o.key}}}`,
+    borderColor: o.stroke,
+    borderWidth: o.strokeWidth,
+    // A template field's `fill` is its ink, not its background: `renderText`
+    // reads it as the printed colour. The canvas tint is restored from the
+    // default instead, so reloading a black-inked field does not paint a black
+    // box behind the marker.
+    textColor: o.fill === "transparent" ? DEFAULT_FIELD.textColor : o.fill,
+    fill: DEFAULT_FIELD.fill,
+    // Restored so a styled field survives a save/reload cycle; without this the
+    // marker reverted to its defaults while the template still claimed the
+    // author's font, size and alignment.
+    fontFamily: o.fontFamily,
+    fontSize: o.fontSize,
+    fontWeight: o.fontWeight,
+    fontStyle: o.fontStyle,
+    textAlign: o.textAlign,
+  });
+  obj.set({
+    left: o.x,
+    top: o.y,
+    width: o.width,
+    height: o.height,
+    angle: o.rotation,
+    opacity: o.opacity,
+    visible: o.visible,
+  } as never);
+  return applyCommon(obj, o, zIndex);
+}
+
+function hydrateBillPart(
+  o: TemplateBillPart,
+  zIndex: number,
+  images?: Map<string, FabricImage>,
+): FabricObject {
+  const src = typeof o.src === "string" ? o.src : undefined;
+  const obj = new BillPartObject({
+    src,
+    normalized: o.normalized === true,
+    sourceRect: o.sourceRect,
+    // The export path pre-decodes every crop the template carries, so handing
+    // the element over is what makes its first `renderAll` paint the real part
+    // rather than the placeholder the object would otherwise draw until its own
+    // decode landed. The editor passes no registry and gets the self-loading
+    // behaviour instead; see `BillPartObject`.
+    image: src !== undefined ? (images?.get(src)?.getElement() as HTMLImageElement) : undefined,
   });
   obj.set({
     left: o.x,
@@ -231,6 +353,7 @@ function hydrateGroup(o: GroupObject, zIndex: number): null {
 export function hydrateObject(
   o: TemplateObject,
   zIndex: number,
+  images?: Map<string, FabricImage>,
 ): FabricObject | null {
   switch (o.type) {
     case "text":
@@ -250,7 +373,11 @@ export function hydrateObject(
     case "table":
       return hydrateTable(o, zIndex);
     case "image-placeholder":
-      return hydrateImagePlaceholder(o, zIndex);
+      return hydrateImagePlaceholder(o, zIndex, images);
+    case "field":
+      return hydrateField(o, zIndex);
+    case "bill-part":
+      return hydrateBillPart(o as TemplateBillPart, zIndex, images);
     case "group":
       return hydrateGroup(o, zIndex);
     default:
@@ -259,11 +386,14 @@ export function hydrateObject(
 }
 
 /** Build every object in a template, bottom to top. */
-export function hydrateTemplate(template: BillTemplate): FabricObject[] {
+export function hydrateTemplate(
+  template: BillTemplate,
+  images?: Map<string, FabricImage>,
+): FabricObject[] {
   const ordered = [...template.objects].sort((a, b) => a.zIndex - b.zIndex);
   const out: FabricObject[] = [];
   ordered.forEach((o, i) => {
-    const obj = hydrateObject(o, i);
+    const obj = hydrateObject(o, i, images);
     if (obj) out.push(obj);
   });
   return out;

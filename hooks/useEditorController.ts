@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { EditorController, type EditorState } from "@/lib/canvas/EditorController";
+import { renderHtml } from "@/lib/render";
 
 /**
  * Owns the single controller instance and mirrors it into React.
@@ -29,6 +30,7 @@ export function useEditorController(): {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as Record<string, unknown>).__btm = controller;
+      (window as unknown as Record<string, unknown>).__btmRender = renderHtml;
     }
   }, [controller]);
 
@@ -100,6 +102,16 @@ export function useKeyboardShortcuts(
         controller.duplicateSelection();
         return;
       }
+      if (mod && key === "g" && e.shiftKey) {
+        e.preventDefault();
+        controller.ungroupSelection();
+        return;
+      }
+      if (mod && key === "g") {
+        e.preventDefault();
+        controller.groupSelection();
+        return;
+      }
       if (mod && key === "a") {
         e.preventDefault();
         controller.selectAll();
@@ -137,8 +149,11 @@ export function useKeyboardShortcuts(
         t: "text",
         g: "table",
         i: "image-placeholder",
+        f: "field",
         h: "hr",
         e: "freehand",
+        k: "eyedropper",
+        b: "bill-part",
       };
       const tool = map[key];
       if (tool) {

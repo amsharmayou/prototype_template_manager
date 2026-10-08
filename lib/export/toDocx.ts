@@ -5,6 +5,7 @@ import {
   BorderStyle,
   Document,
   HeadingLevel,
+  ImageRun,
   Packer,
   Paragraph,
   Table,
@@ -17,6 +18,7 @@ import {
 import { downloadBlob, safeFilename } from "./download";
 import type {
   BillTemplate,
+  BillPartObject,
   ImagePlaceholderObject,
   LineObject,
   ShapeObject,
@@ -204,6 +206,87 @@ function placeholderParagraph(
   });
 }
 
+/**
+ * A crop's embedded bytes, or `null` when it is not one we can embed.
+ *
+ * Only a base64 PNG data URL is accepted, and the payload is decoded here
+ * rather than handed to `docx` as a string. A part's `src` comes from the
+ * canvas, but a template can be hand edited and `Load Template` parses it with
+ * a bare `JSON.parse`, so an `http(s)://` or `javascript:` src is a possible
+ * input. Refusing anything that is not inline image data keeps that string
+ * out of the document entirely — the same stance `renderBillPart` takes in
+ * `lib/render/primitives.ts`. Nothing is fetched, so the export stays local.
+ */
+function billPartImageData(src: unknown): Uint8Array | null {
+  if (typeof src !== "string") return null;
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/]*={0,2})$/.exec(src);
+  if (!match) return null;
+  try {
+    const binary = atob(match[1]!);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return bytes.length > 0 ? bytes : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Embed the cut-out itself, sized from the object's saved geometry.
+ *
+ * A label here would leave the export looking finished while the content the
+ * author cut out is missing, which is worse than a visible gap. `docx` takes
+ * pixels for `transformation`, which is the same convention this file uses for
+ * every other measurement, so the part lands at the size it occupies on the
+ * canvas. The intrinsic size is left to Word: the template's `width`/`height`
+ * already carry the chosen aspect ratio, and the crop is stretched onto them at
+ * export time exactly as the canvas shows it.
+ */
+function billPartParagraph(
+  o: BillPartObject,
+  width: number,
+  height: number,
+  indent?: number,
+): Paragraph {
+  const data = billPartImageData(o.src);
+  if (!data) {
+    // Same fallback shape as an unbound image placeholder: a visible marker,
+    // never an arbitrary URL.
+    return new Paragraph({
+      alignment: AlignmentType.CENTER,
+      spacing: { before: 0, after: 0 },
+      indent: indent ? { left: twips(indent) } : undefined,
+      children: [
+        new TextRun({
+          text: `[${o.name || "BILL PART"}]`,
+          font: "Arial",
+          size: halfPoints(11),
+          color: "808080",
+          italics: true,
+        }),
+      ],
+    });
+  }
+  return new Paragraph({
+    spacing: { before: 0, after: 0 },
+    indent: indent ? { left: twips(indent) } : undefined,
+    children: [
+      new ImageRun({
+        type: "png",
+        data,
+        transformation: {
+          width: Math.max(1, Math.round(width)),
+          height: Math.max(1, Math.round(height)),
+        },
+        altText: {
+          name: typeof o.name === "string" ? o.name : "Bill part",
+          description: "Cut-out from the bill reference image",
+        },
+      }),
+    ],
+  });
+}
+
 function tableToDocx(o: TableObject): Table {
   const rows = o.rowHeights.map((_, r) => {
     const cells = o.colWidths.map((_, c) => {
@@ -291,6 +374,10 @@ function bandToTable(band: Placed[]): Table {
       );
     } else if (o.type === "image-placeholder") {
       children.push(placeholderParagraph(o as ImagePlaceholderObject));
+    } else if (o.type === "bill-part") {
+      children.push(
+        billPartParagraph(o as BillPartObject, item.width, item.height),
+      );
     } else if (o.type === "line" || o.type === "hr" || o.type === "vr") {
       children.push(shapeParagraph(o as LineObject));
     } else {
@@ -373,6 +460,15 @@ export async function exportDocx(template: BillTemplate): Promise<void> {
         );
       } else if (only.object.type === "image-placeholder") {
         body.push(placeholderParagraph(only.object as ImagePlaceholderObject, only.object.x));
+      } else if (only.object.type === "bill-part") {
+        body.push(
+          billPartParagraph(
+            only.object as BillPartObject,
+            only.width,
+            only.height,
+            only.object.x,
+          ),
+        );
       } else {
         body.push(
           new Paragraph({

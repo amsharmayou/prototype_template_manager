@@ -7,6 +7,31 @@ function makeTable(colWidths: number[] = [300, 40, 40], rowHeights: number[] = [
   return new BillTable({ colWidths, rowHeights, headerRow: false });
 }
 
+describe("BillTable cell re-indexing on shape change", () => {
+  it("preserves absolute cell positions in a non-square grid", () => {
+    const t = makeTable([100, 100, 100, 100, 100], [30, 30, 30]);
+    // Place distinctive text per absolute cell.
+    for (let r = 0; r < 3; r++) {
+      for (let c = 0; c < 5; c++) {
+        t.setCellText(r, c, `${r},${c}`);
+      }
+    }
+    t.addRow(1, 30);
+
+    expect(t.rows).toBe(4);
+    expect(t.columns).toBe(5);
+    // Original cells keep their (row, column) mapping through the insert.
+    expect(t.getCell(0, 0)?.text).toBe("0,0");
+    expect(t.getCell(0, 4)?.text).toBe("0,4");
+    expect(t.getCell(2, 0)?.text).toBe("1,0");
+    expect(t.getCell(3, 4)?.text).toBe("2,4");
+
+    t.removeColumn(0);
+    expect(t.getCell(0, 0)?.text).toBe("0,1");
+    expect(t.getCell(0, 3)?.text).toBe("0,4");
+  });
+});
+
 describe("BillTable resize gesture", () => {
   it("scales every column by the same factor", () => {
     const t = makeTable();

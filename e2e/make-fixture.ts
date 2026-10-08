@@ -112,8 +112,55 @@ async function main(): Promise<void> {
     Buffer.from(longUrl.replace(/^data:image\/png;base64,/, ""), "base64"),
   );
 
+  // Tinted-paper fixture, used only by the bill-part tests. Its background is
+  // deliberately NOT white (#f2ece0 cream), because a white page would make the
+  // background normalization indistinguishable from a no-op: the crop would
+  // already be white. The dark "logo" block is enclosed by the cream paper, so
+  // the border-connected flood fill has something it must refuse to erase.
+  const tintedUrl = await page.evaluate(
+    ({ w, h }) => {
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const x = c.getContext("2d")!;
+      x.fillStyle = "#f2ece0";
+      x.fillRect(0, 0, w, h);
+
+      // A dark logo, plus ink inside it, well away from the crop border so the
+      // normalization assertions can prove the content survived.
+      x.fillStyle = "#7a1f1f";
+      x.fillRect(40, 40, 300, 180);
+      x.fillStyle = "#ffffff";
+      x.font = "bold 30px Arial";
+      x.fillText("ACME", 60, 110);
+      x.font = "16px Arial";
+      x.fillText("Logo block", 60, 150);
+
+      // Ink on the cream paper, inside the region the tests will cut.
+      x.fillStyle = "#20242a";
+      x.font = "bold 26px Arial";
+      x.fillText("INVOICE 2291", 40, 300);
+      x.font = "15px Arial";
+      x.fillText("Total due: 412.55", 40, 340);
+      x.fillText("Payment reference", 40, 370);
+      x.strokeStyle = "#3a4048";
+      x.lineWidth = 2;
+      x.beginPath();
+      x.moveTo(40, 395);
+      x.lineTo(700, 395);
+      x.stroke();
+      return c.toDataURL("image/png");
+    },
+    { w: W, h: H },
+  );
+  const tintedOut = join(process.cwd(), "e2e", "fixtures", "tinted-bill.png");
+  writeFileSync(
+    tintedOut,
+    Buffer.from(tintedUrl.replace(/^data:image\/png;base64,/, ""), "base64"),
+  );
+
   await browser.close();
-  process.stdout.write(`wrote ${out} and long-bill.png\n`);
+  process.stdout.write(`wrote ${out}, long-bill.png and ${tintedOut}\n`);
 }
 
 void main();

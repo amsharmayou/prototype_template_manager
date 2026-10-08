@@ -24,6 +24,7 @@ npm run dev        # http://localhost:3000
 | --- | --- |
 | `npm run dev` | Development server |
 | `npm run build` | Production build |
+| `npm run build:share` | Rebuild the standalone share runtime into `public/sharekit.js` |
 | `npm run lint` | ESLint (Next core-web-vitals + typescript) |
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm test` | Vitest unit tests (pure logic) |
@@ -44,6 +45,73 @@ The E2E test starts its own dev server on port 3111.
 5. **Export ▾** to download any format.
 
 ---
+
+## Three ways out of the editor
+
+A traced template is only useful if something can fill it in, so the editor
+offers three exits, and they differ in who ends up holding the file.
+
+| Action | Goes to | The template ends up |
+| --- | --- | --- |
+| **Save Template** | a `.json` file | with you, as data to re-open later |
+| **Fill & Render** | `/render` in this app | in the app's template library |
+| **Share as .html** | one `.html` file | with whoever you send it to |
+
+### Share as .html - one file, no server
+
+The shared file carries the template *and* the small runtime that knows how to
+fill it, inlined. Open it in any browser and you get:
+
+- a form generated from the template's own placeholders, grouped by where each
+  one lives (text boxes, table cells, image slots),
+- a live preview of the printed page beside it,
+- **Print / Save as PDF**, the desktop route to a finished PDF.
+
+Nothing is fetched at runtime and there is no upload step, so it works offline
+and the recipient never sees this app.
+
+The runtime lives in `lib/share/` and esbuild bundles it into
+`public/sharekit.js` (`npm run build:share`). That bundle may only import
+platform-free modules - no React, no Fabric - which is what keeps the shared
+file small and self-contained. `lib/share/document.ts` assembles the file and
+escapes the embedded template, so a value containing `</script>` cannot break
+out of its JSON block.
+
+### Placeholders
+
+Every `{{token}}` and image placeholder becomes one generated form field. The
+label, input type and max length are inferred from the key name
+(`invoice_date` asks for a date, `total` for currency), and the
+**Placeholders** panel in the left sidebar lets each one override that
+inference:
+
+- the label the form shows,
+- the input type (`text`, `number`, `date`, `currency`),
+- a max length for the input,
+- and the **printed style**: font family, size, weight, style and colour.
+
+A style applies where the placeholder fills a text box or table cell *by
+itself*. A box reading `Total: {{total}}` keeps its own styling, because the
+token is only part of the line - give the token its own text box when you want
+it styled on its own.
+
+A placeholder with no overrides behaves exactly as it always did, so the
+metadata is entirely optional and templates saved before it keep working
+unchanged.
+
+### Fidelity: what the HTML engine reproduces
+
+Every traced colour, border, radius, opacity, rotation and font name is
+written verbatim into the standalone HTML: shared files pick them up, because
+the public JSON is the visual contract. The editor's whitelist of families is
+covered out of the box; any custom face you type is passed through by name.
+Two boundaries to know about:
+
+- Fonts are *referenced*, never embedded. A recipient needs that family
+  installed on their machine, otherwise their browser falls back to the
+  generic sans/serif in the emitted stack.
+- Placeholder style only paints a token that occupies its own box or cell.
+  `Total: {{total}}` prints with the surrounding box's styling by design.
 
 ## Architecture
 
@@ -84,7 +152,14 @@ than per pointer-move.
 {
   "templateVersion": 1,
   "document": { "width": 794, "height": 1123 },
-  "meta": { "name": "acme-invoice", "modifiedAt": "2026-01-15T…" },
+  "meta": {
+    "name": "acme-invoice", "modifiedAt": "2026-01-15T.",
+    // Optional per-key contracts. Absent means "infer everything".
+    "placeholders": [
+      { "key": "customer_name", "label": "Who to bill", "maxLength": 60,
+        "fontFamily": "Georgia", "fontWeight": "bold" }
+    ]
+  },
   "objects": [
     {
       "id": "rect_1a2b3c",
@@ -164,6 +239,56 @@ The same applies inside table cells.
 | **PDF** | jsPDF, page sized in `px` to the document (not the browser viewport), content via `addSvgAsImage` | Visually exact. Falls back to a 3× raster if the SVG path throws. |
 | **DOCX** | `docx` library, built from the template | Structural, not pixel-exact. See below. |
 | **PNG** | 2× raster of the template | Exact. The only deliberately raster export. |
+| **HTML Document** | Pure `lib/render` — `(template, values) => string`, no canvas | Exact, deterministic, inert. Print-ready. See below. |
+
+### The HTML Document export
+
+The sixth export is the only one that does not go through Fabric. `lib/render`
+is a pure package with one public entry:
+
+```ts
+renderHtml(template, values, options) -> { html, refusals, variables }
+```
+
+- **Pure and deterministic.** No Fabric, no React, no DOM, no network, no clock.
+  The same template and the same values always produce the same bytes, which is
+  what lets the output be cached, diffed, or sent to a printer. A test reads
+  `lib/render/*.ts` as text and fails on `Date`, `Math.random`, `Intl`,
+  `toLocaleString`, `crypto`, `fetch` and the DOM, so the guarantee cannot be
+  configured off.
+- **`meta.modifiedAt` is excluded** from the output and from the
+  `data-template-hash` fingerprint. It changes on every save, so including it
+  would make the hash unable to answer the question a caller actually asks — has
+  the layout changed? Two saves of the same trace keep the same fingerprint.
+- **Two separate defences, for two separate kinds of input.** A *user value*
+  that reaches text is HTML-escaped. A *template value* that reaches CSS is not
+  escaped but validated against a whitelist — `safeColor`, `safeLength`,
+  `safeAngle`, `safeOpacity`, `fontStack` — because escaping a bad colour would
+  still print the attacker's colour. Anything refused is returned in
+  `refusals` with the field and the reason, so the caller learns what to fix.
+- **`values` defaults to `{}`,** which leaves `{{placeholder}}` tokens printing
+  literally. That is deliberate: this sprint's static render is a real subset of
+  the future data-bound render rather than throwaway work. The next step — a
+  values panel or a data-file loader — reuses this same code path and passes a
+  map instead of nothing.
+- **A table is a real `<table>`**, not a pile of absolutely-positioned cells: a
+  `<colgroup>` carrying the traced column widths, the header row in `<thead>`
+  with `<th>`, the rest in `<tbody>` with `<td>`. A bill table that survives
+  round-tripping through a browser's reflow, a print dialog and a PDF printer is
+  worth more than pixel-identical markup that only this app can read.
+- **`@page` is sized in the document's own pixels**, not A4 — a traced bill is
+  usually not A4 and must print at its true size. px-only also means a
+  browser's minimum-font-size setting cannot move anything.
+- **Fonts: layout identical everywhere, glyph shapes not.** Nothing is loaded
+  from outside the page and no font is embedded, so a substituted family changes
+  the letterforms. Every length is fixed and text is `white-space: pre` and
+  clipped, so the *boxes* are identical in every browser — the shapes inside them
+  depend on the fonts the reader already has.
+- **The file contains no JavaScript.** No `<script>`, no `<link>`, no `@import`,
+  no remote reference, and no `xmlns` on the inline `<svg>` elements (HTML5 puts
+  `<svg>` in the SVG namespace on its own). So printing is the browser's own
+  print pipeline, the file opens with the network switched off, and it can be
+  emailed to someone who did not create it.
 
 ### Why DOCX is a flow approximation
 
@@ -275,6 +400,22 @@ These cost real debugging time and are load-bearing for anyone extending this:
    when the gesture began, so re-applying the same absolute target is a no-op
    rather than one more multiplication.
 
+4. **Every freehand stroke was silently dropped from every export.** A Fabric
+   `Path` stores its geometry as `path: Array<[command, ...coords]>`, an array of
+   command *tuples* — not a string. The serialiser had a `str(v, fallback)`
+   helper that returns `fallback` for anything that is not a string, and applied
+   it to `o.path`, so every stroke was written as `path: ""`. On reload
+   `hydrateFreehand` returns `null` for an empty path, so pencil strokes vanished
+   from a saved template, and every export built from that template lost them too.
+   Nothing errored: a whole traced drawing was quietly lost.
+
+   Fabric 7.4.0 exports **neither `joinPath` nor `getPathCommandsInfo`** from its
+   package entry — verified — so there is no library helper to call, and the `d`
+   string is built locally in `serialize.ts` by joining the tuples. A `d` string
+   is still the right wire format for the template because `new Path(<data>)`
+   parses path data back into exactly those tuples, so `hydrateFreehand` needed no
+   change and the round trip is exact.
+
 ---
 
 ## Files
@@ -296,7 +437,7 @@ components/
       LayersPanel.tsx            Layer list: rename, role, visibility, lock, reorder
       ReferencePanel.tsx         Opacity, show, lock, remove
       TopBar.tsx                 Open / Save / Undo / Redo / Preview / Export
-      ExportMenu.tsx             JSON, SVG, PDF, DOCX, PNG
+      ExportMenu.tsx             JSON, SVG, PDF, DOCX, PNG, HTML Document
     StatusBar                    Zoom, document size, object count, zoom controls
   ui/Controls.tsx                Panel, Field, TextInput, NumberInput, Select,
                                  ColorInput, Button, Checkbox
@@ -324,8 +465,20 @@ lib/
     toPdf.ts                     jsPDF
     toDocx.ts                    docx, with the banding algorithm
     download.ts                  Blob/URL download helpers
+  render/                        ← pure, deterministic, no Fabric/React/DOM
+    index.ts                     renderHtml: the public entry, sheet, z-order,
+                                 fingerprint, refusal aggregation
+    primitives.ts                One function per object type; the only file that
+                                 knows a document coordinate exists
+    style.ts                     The stylesheet, a pure function of page size
+    css.ts                       Whitelist validation: safeColor, fontStack,
+                                 safeLength, safeAngle, safeOpacity, Refusals
+    values.ts                    {{token}} extraction and resolution
+    escape.ts                    escapeHtml, attr
+    canonical.ts                 Key-sorted JSON, for hashing
+    sha256.ts                    Pure-TS SHA-256, hex out
 tests/                           Vitest: geometry, placeholders, serialize, history,
-                                 tableResize
+                                 tableResize, render, renderGolden
 e2e/
   workflow.spec.ts               17-step end-to-end workflow
   make-fixture.ts                Generates the A4 and 2600px-tall bill PNGs
@@ -352,7 +505,8 @@ imports it directly rather than going through `@eslint/eslintrc`.
 ## Testing
 
 ```bash
-npm test        # 89 unit tests over the pure layer and the table resize gesture
+npm test        # 194 unit tests over the pure layer, the table resize gesture
+                # and the HTML renderer
 npm run test:e2e
 ```
 
@@ -364,21 +518,33 @@ resolves from its snapshot rather than compounding, that no single column
 absorbs the whole expansion, and that a pending gesture never reaches the
 serialiser or a reload).
 
+`tests/renderGolden.test.ts` compares the renderer's output **byte for byte**
+against five committed files in `tests/renderGolden/`, and names the first
+differing line, so an unintended change shows up in review rather than as a
+diff nobody reads. Set `UPDATE_GOLDEN=1` to rewrite them. Because a golden that
+was generated without being read only proves the renderer is self-consistent,
+they were read: the table case carries a `<colgroup>` with `300px 200px 214px` in
+that order, the freehand case carries its `d`, `@page size:` matches each
+document's own pixels, and `{{ total }}` is substituted with `3,510.00`.
+
 The E2E test drives the real browser through the full workflow: upload a local
 bill, verify the reference is a non-selectable 25%-opacity image, trace borders,
 rules, text and a table, assert the table's grid maths, assert cell hit-testing
 resolves to the right slot, assert zooming does not change document
 coordinates, preview on/off, undo/redo, reload the template, then download all
-five formats and check their contents — the SVG has no `<image>`, the PDF starts
-with `%PDF`, the DOCX is a real OOXML zip, the PNG has the right magic bytes.
+five original formats and check their contents — the SVG has no `<image>`, the PDF
+starts with `%PDF`, the DOCX is a real OOXML zip, the PNG has the right magic
+bytes. A separate case downloads the HTML Document and checks it is a
+self-contained inert page: it starts with `<!DOCTYPE html>`, contains no
+`<script>`, no `<link>`, no `@import` and no remote reference, and carries a
+`data-template-hash` and an `@page` rule.
 
 A second suite covers pane navigation against a purpose-built 794 x 2600
-fixture: the loaded bill is fitted to the pane, a fitted long page needs no
-scrolling, zooming in makes the stage scrollable to the very bottom, scrolling
-cannot pass the image edge, the wheel scrolls without changing zoom while
-Ctrl+wheel zooms, drag-panning works in both directions without offsetting the
-page inside the canvas, and the pane refits on resize until the user picks a
-zoom.
+fixture: the loaded bill is fitted to the pane, a fitted long page is entirely
+visible without scrolling, zooming in lets the view reach the bottom of the
+page, panning never goes past the image edge, a plain wheel zooms under the
+cursor while preserving the scene point beneath it, and the pane refits on
+resize until the user picks a zoom.
 
 A third suite covers the page/image binding (the page adopts the image's exact
 shape; loading a differently-sized template re-binds the image instead of
@@ -387,39 +553,35 @@ size accepts a retyped value, all eight handles keep the table's top-left pinned
 while every column holds its share of the new total, and the table's paint
 origin matches Fabric's centred origin).
 
+A fourth suite covers the `/render` pipeline: saving the template to the local
+library, deriving the placeholder form from it, filling in sample data,
+previewing the live HTML, and downloading a filled PDF and a self-contained
+HTML document.
+
 Wheel behaviour is asserted with synthetic events, because Playwright's
 `mouse.wheel()` does not deliver a DOM wheel event to the page in this headless
 setup (a capture-phase listener on the canvas never fires). The handler is the
-same either way, and the test additionally asserts that a plain wheel does
-*not* call `preventDefault`, which is what lets the real browser scroll
-natively.
+same either way: it zooms at the cursor and always calls `preventDefault`, so
+Ctrl+wheel cannot trigger the browser's page-zoom.
 
 ---
 
 ## Navigating the pane
 
-The canvas stage is a **native scroll container**. The canvas element is sized
-to `document × zoom`, so:
-
-- a page smaller than the pane is centred with a margin;
-- a page larger than the pane scrolls, in both axes, with normal scrollbars and
-  trackpad momentum.
+The canvas stage no longer scrolls at all. The canvas element fills the pane,
+and panning plus zoom are a single affine viewport transform owned by the
+Fabric canvas:
 
 | Input | Action |
 | --- | --- |
-| **Scroll wheel** | Scrolls the pane. Never zooms. |
-| **Ctrl/⌘ + wheel** | Zooms about the pointer. `preventDefault` stops the browser page-zooming. |
-| **Space + drag**, **Alt + drag**, **middle-drag** | Pans by scrolling the pane. |
-| **Fit** button | Scales so the whole page is visible and clears any pan offset. |
-| `+` / `−` / `100%` | Zoom in, out, reset. |
+| **Wheel** (plain or Ctrl/⌘) | Zooms about the pointer, clamped to `MAX_ZOOM` and to never zooming out past the fitted page. `preventDefault` always runs, so Ctrl+wheel never page-zooms. |
+| **Space + drag**, **Alt + drag**, **middle-drag** | Pans by translating the viewport, clamped so the page edge cannot leave the pane. |
+| **Fit** button | The view that shows the whole page with the editor's 24 px margin and clears any pan offset. |
+| `+` / `−` / `100%` | Zoom in, out, and re-fit (`100%` zooms toward the pane centre; `Fit` is the unprefixed reset). |
 
 Loading a bill fits it to the pane automatically. The pane also refits when it
 resizes, until you choose a zoom level yourself — after that your zoom is
 respected and never yanked away by a window resize.
-
-The page is the boundary: it is only inset with a margin while it fits, so
-scrolling can never reveal empty space beyond the image's edge in either
-direction.
 
 ## The page and the image are bound together
 
@@ -485,9 +647,43 @@ the old value back and `12` after `3` produces `12` rather than `312`.
 | `Ctrl/Cmd + D` | Duplicate selection |
 | `Ctrl/Cmd + A` | Select all |
 | `Ctrl/Cmd + S` | Save template JSON |
-| `Space` + drag | Pan · **Ctrl** + scroll to zoom · scroll to move |
+| **Wheel** | Zooms, anchored at the cursor (the pane itself never scrolls) |
+| `Space` + drag / `Alt` + drag / middle-drag | Pans by translating the view |
 
 Shortcuts are suppressed while typing in a field or editing text.
+
+---
+
+## The /render page: filling a template with real data
+
+`/` is the editor. `/render` turns a saved template into data-bound output:
+
+1. On `/render`, pick a template from the local library (or upload a `.json`
+   file, or use the template you were editing via **Fill & Render →** in the
+   editor's top bar).
+2. The page derives a form from the template: every `{{token}}` found in a
+   text box or a table cell, plus every image slot
+   (`image-placeholder`, keyed by its role: logo, signature, qr…). Field
+   types are inferred from the key — dates, amounts, quantities and text.
+3. Fill the form (or click **Fill sample data**).  The preview iframe
+   re-renders on every keystroke, and the **Download PDF**, **Download
+   HTML** and **Print** buttons all come from the same `fillTemplate`
+   snapshot, so what you see is what you print.
+
+The template itself still only holds *structure and placeholders*; values
+leave the form and produce a new object every time you render.
+
+---
+
+## Zooming and the reference image are one surface
+
+The Fabric canvas fills its pane and the reference image is `canvas.backgroundImage`,
+not a scene object. Fabric renders the background through the same viewport
+transform as every object, so a wheel zoom or a drag pan moves the paper, the
+reference image and your traced layers as a single affine surface, pinned
+inside the image's edges. Panning is clamped so the page edge can never be
+scrolled past, and zoom is a pure cursor-anchored `zoomAbout` from
+`lib/canvas/viewport.ts`, with no DOM-scroll to Fabric-zoom state to fight.
 
 ---
 
@@ -524,12 +720,22 @@ Shortcuts are suppressed while typing in a field or editing text.
   derived independently instead of being locked to one proportional factor.
 - **Text vertical alignment** is stored but not yet honoured on canvas or in
   exports.
-- **No persistence beyond explicit Save/Load.** No autosave, no project
-  directory. Multiple line items in a table are handled as repeated rows by the
-  future renderer; the editor models one grid.
+- **Persistence is only local.** Named templates live in `localStorage` for
+  `/render`, and the editor handoff uses `sessionStorage`. There is no
+  autosave, no project directory, and no cloud sync. Multiple line items in a
+  table are handled as repeated rows by the future renderer; the editor models
+  one grid.
 - **Freehand paths are opaque outlines**, not editable strokes, and export as
   filled vector paths.
+- **The blank editor export ships no values.** The editor exports templates
+  directly, so `Export → HTML Document` prints `{{placeholders}}` literally.
+  Use `/render` (via **Fill & Render →**) to bind values and produce the
+  filled preview, PDF and HTML in one pass.
+- **The HTML export cannot clear text overflow itself.** Cells clip
+  (`overflow: hidden`) rather than shrink or ellipsise, because a document that
+  silently shortens a bill is worse than one that clips it.
 - **Exported SVG/PDF text is not outlined or font-embedded**, so unusual fonts
-  may substitute in other viewers.
+  may substitute in other viewers. The same applies to the HTML export: layout is
+  identical everywhere, glyph *shapes* depend on the fonts the reader has.
 - The E2E test covers one shape of template; the freehand, polygon and
   image-placeholder tools are not exercised by it.

@@ -44,3 +44,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Superpowers: subagent-driven development scratch (ledger, briefs, review packages)
+.superpowers/

@@ -16,17 +16,64 @@ import {
 } from "@/components/ui/Controls";
 import { BillTable } from "@/lib/canvas/objects/BillTable";
 import type { EditorController, EditorState } from "@/lib/canvas/EditorController";
+import {
+  acceptsSharedPaint,
+  sharedSelection,
+} from "@/lib/canvas/sharedSelection";
 import { SUGGESTED_VARIABLES, toToken } from "@/lib/template/placeholders";
 import type { TemplateObject } from "@/lib/template/types";
 
 const FONTS = [
   { value: "Arial", label: "Arial" },
   { value: "Helvetica", label: "Helvetica" },
+  { value: "Segoe UI", label: "Segoe UI" },
+  { value: "Tahoma", label: "Tahoma" },
+  { value: "Trebuchet MS", label: "Trebuchet MS" },
+  { value: "Verdana", label: "Verdana" },
+  { value: "Calibri", label: "Calibri" },
+  { value: "Cambria", label: "Cambria" },
+  { value: "Georgia", label: "Georgia" },
+  { value: "Palatino Linotype", label: "Palatino Linotype" },
+  { value: "Book Antiqua", label: "Book Antiqua" },
+  { value: "Garamond", label: "Garamond" },
+  { value: "Century Gothic", label: "Century Gothic" },
+  { value: "Impact", label: "Impact" },
+  { value: "Comic Sans MS", label: "Comic Sans MS" },
   { value: "Times New Roman", label: "Times New Roman" },
   { value: "Courier New", label: "Courier New" },
-  { value: "Verdana", label: "Verdana" },
-  { value: "Georgia", label: "Georgia" },
+  { value: "Lucida Console", label: "Lucida Console" },
 ];
+
+/** A small free-text family input committing only on blur/Enter. */
+function CustomFontInput({
+  value,
+  onCommit,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  return (
+    <TextInput
+      value={draft ?? value}
+      placeholder="Any installed family"
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        if (draft !== null && draft.trim() && draft !== value) {
+          onCommit(draft.trim());
+        }
+        setDraft(null);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" && draft !== null && draft.trim()) {
+          onCommit(draft.trim());
+          setDraft(null);
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
 
 export default function PropertiesPanel({
   controller,
@@ -138,7 +185,9 @@ function SinglePanel({
                 // set would desync the two and leave the grid drawn inside an
                 // oversized selection box.
                 if (obj instanceof BillTable) obj.resizeColumnsTo(v);
-                else obj.set({ width: v } as never);
+                else if (o.type === "ellipse") {
+                  obj.set({ width: v, rx: v / 2 } as never);
+                } else obj.set({ width: v } as never);
               }, "Resize")}
             />
           </Field>
@@ -147,7 +196,9 @@ function SinglePanel({
               value={o.height}
               onChange={(v) => apply((obj) => {
                 if (obj instanceof BillTable) obj.resizeRowsTo(v);
-                else obj.set({ height: v } as never);
+                else if (o.type === "ellipse") {
+                  obj.set({ height: v, ry: v / 2 } as never);
+                } else obj.set({ height: v } as never);
               }, "Resize")}
             />
           </Field>
@@ -221,6 +272,30 @@ function SinglePanel({
       {o.type === "text" ? <TextPanel controller={controller} o={o} /> : null}
       {o.type === "table" ? <TablePanel controller={controller} o={o} /> : null}
       {o.type === "image-placeholder" ? <PlaceholderPanel controller={controller} o={o} /> : null}
+      {o.type === "field" ? <FieldPanel controller={controller} o={o} /> : null}
+      {o.type === "bill-part" ? (
+        <Panel title="Bill Part">
+          <p className="text-[10px] text-neutral-400">
+            Recapture uses the object&rsquo;s current canvas position to replace its image.
+          </p>
+          <Checkbox
+            label="Whiten paper"
+            checked={o.normalized === true}
+            disabled={!state.hasReference}
+            onChange={(v) => controller.recaptureBillPart(o.id, v)}
+          />
+          <p className="text-[10px] text-neutral-400">
+            Turning this re-cuts the part from where it sits, with or without the
+            paper whitened. Recapture keeps whatever is set here.
+          </p>
+          <Button
+            onClick={() => controller.recaptureBillPart(o.id)}
+            disabled={!state.hasReference}
+          >
+            Recapture from current position
+          </Button>
+        </Panel>
+      ) : null}
 
       <Panel title="Align">
         <div className="grid grid-cols-3 gap-1">
@@ -272,6 +347,9 @@ function TextPanel({
   o: Extract<TemplateObject, { type: "text" }>;
 }) {
   const [text, setText] = useState(o.text);
+  // A wrapped box is a Fabric `Textbox`; an auto-width box is an `IText`. The
+  // template's `wrapWidth` is the durable answer and is what survives a reload.
+  const isWrapped = (o as unknown as { wrapWidth?: number }).wrapWidth !== undefined;
 
   const apply = (fn: (obj: FabricObject) => void, label?: string) =>
     controller.applyToSelection(fn, label);
@@ -337,6 +415,16 @@ function TextPanel({
             ]}
           />
         </Field>
+        <Field label="Style">
+          <Select
+            value={o.fontStyle}
+            onChange={(v) => apply((obj) => obj.set({ fontStyle: v } as never), "Font style")}
+            options={[
+              { value: "normal", label: "Normal" },
+              { value: "italic", label: "Italic" },
+            ]}
+          />
+        </Field>
         <Field label="Align">
           <Select
             value={o.textAlign}
@@ -348,6 +436,24 @@ function TextPanel({
             ]}
           />
         </Field>
+<Field label="Custom family" hint="Any installed face, e.g. My Custom Font">
+        <CustomFontInput
+          value={o.fontFamily}
+          onCommit={(v) => apply((obj) => obj.set({ fontFamily: v } as never), "Font family")}
+        />
+      </Field>
+      <Field
+        label="Wrap"
+        hint="Fixed width: the text wraps and the box grows downward. Off means one auto-width line."
+      >
+        <Button
+          className="w-full"
+          variant={isWrapped ? "primary" : "default"}
+          onClick={() => controller.setTextWrap(!isWrapped)}
+        >
+          {isWrapped ? "Wrapped — click to unwrap" : "Wrap at this width"}
+        </Button>
+      </Field>
       </div>
       <div className="rounded bg-neutral-50 px-2 py-1.5 text-[10px] text-neutral-500">
         <div>
@@ -648,6 +754,284 @@ function PlaceholderPanel({
   );
 }
 
+function FieldPanel({
+  controller,
+  o,
+}: {
+  controller: EditorController;
+  o: Extract<TemplateObject, { type: "field" }>;
+}) {
+  const [key, setKey] = useState(o.key);
+
+  return (
+    <Panel title="Field">
+      <Field label="Key" hint="Form key, e.g. invoice_date">
+        <TextInput
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          onBlur={() => {
+            const next = key.trim();
+            if (next && next !== o.key) {
+              controller.applyToSelection((obj) => {
+                obj.set({ key: next, label: `{{${next}}}` } as never);
+              }, "Field key");
+            }
+          }}
+        />
+      </Field>
+      <Field label="Type">
+        <Select
+          value={o.fieldType}
+          onChange={(v) =>
+            controller.applyToSelection(
+              (obj) => obj.set({ fieldType: v } as never),
+              "Field type",
+            )
+          }
+          options={[
+            { value: "text", label: "Text" },
+            { value: "number", label: "Number" },
+            { value: "date", label: "Date" },
+            { value: "currency", label: "Currency" },
+            { value: "tickmark", label: "Tickmark (✓/✗)" },
+            { value: "checkbox", label: "Checkbox" },
+          ]}
+        />
+      </Field>
+      <Field label="Ink colour" hint="Also the colour the value prints in">
+        <ColorInput
+          value={o.fill}
+          onChange={(v) =>
+            controller.applyToSelection((obj) => {
+              // The marker's ink and the printed value's ink are one colour.
+              // `fill` is deliberately not touched: on a field it is the tint
+              // behind the dashed box, and painting that would fill the slot
+              // with ink instead.
+              obj.set({ textColor: v } as never);
+              obj.setCoords();
+            }, "Field colour")
+          }
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Font">
+          <Select
+            value={o.fontFamily}
+            onChange={(v) =>
+              controller.applyToSelection(
+                (obj) => obj.set({ fontFamily: v } as never),
+                "Font",
+              )
+            }
+            options={FONTS}
+          />
+        </Field>
+        <Field label="Size">
+          <NumberInput
+            value={o.fontSize}
+            min={4}
+            onChange={(v) =>
+              controller.applyToSelection(
+                (obj) => obj.set({ fontSize: v } as never),
+                "Font size",
+              )
+            }
+          />
+        </Field>
+        <Field label="Weight">
+          <Select
+            value={o.fontWeight}
+            onChange={(v) =>
+              controller.applyToSelection(
+                (obj) => obj.set({ fontWeight: v } as never),
+                "Weight",
+              )
+            }
+            options={[
+              { value: "normal", label: "Normal" },
+              { value: "bold", label: "Bold" },
+            ]}
+          />
+        </Field>
+        <Field label="Style">
+          <Select
+            value={o.fontStyle}
+            onChange={(v) =>
+              controller.applyToSelection(
+                (obj) => obj.set({ fontStyle: v } as never),
+                "Font style",
+              )
+            }
+            options={[
+              { value: "normal", label: "Normal" },
+              { value: "italic", label: "Italic" },
+            ]}
+          />
+        </Field>
+      </div>
+      <Field label="Align" hint="Left, centre or right, as in a text box">
+        <Select
+          value={o.textAlign}
+          onChange={(v) =>
+            controller.applyToSelection(
+              (obj) => obj.set({ textAlign: v } as never),
+              "Align",
+            )
+          }
+          options={[
+            { value: "left", label: "Left" },
+            { value: "center", label: "Centre" },
+            { value: "right", label: "Right" },
+          ]}
+        />
+      </Field>
+      <Field label="Custom family" hint="Any installed face, e.g. My Custom Font">
+        <CustomFontInput
+          value={o.fontFamily}
+          onCommit={(v) =>
+            controller.applyToSelection(
+              (obj) => obj.set({ fontFamily: v } as never),
+              "Font family",
+            )
+          }
+        />
+      </Field>
+    </Panel>
+  );
+}
+
+/**
+ * Properties a whole selection agrees on, edited once.
+ *
+ * A control whose value the objects disagree on shows a dash instead of one
+ * object's value, so the panel never claims a shared state that is not there.
+ * Choosing a new value writes it across the selection as a single edit, so one
+ * change is one undo step rather than one per object.
+ */
+function MultiAppearancePanel({
+  controller,
+  state,
+  selected,
+}: {
+  controller: EditorController;
+  state: EditorState;
+  selected: TemplateObject[];
+}) {
+  const shared = sharedSelection(selected);
+  const paintable = selected.filter(acceptsSharedPaint);
+
+  return (
+    <Panel title="Appearance">
+      {paintable.length > 0 ? (
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="Stroke">
+            <div className="flex items-center gap-1">
+              {shared.stroke === undefined ? <Mixed /> : null}
+              <ColorInput
+                // A mixed selection has no single colour to show, so the swatch
+                // opens on black. The dash beside it is what says "these do not
+                // agree", and the control stays live so picking a colour is
+                // still how the disagreement gets settled.
+                value={shared.stroke ?? "#000000"}
+                onChange={(v) => controller.applyShared("stroke", v, "Stroke")}
+              />
+            </div>
+          </Field>
+          <Field label="Stroke width">
+            <div className="flex items-center gap-1">
+              {shared.strokeWidth === undefined ? <Mixed /> : null}
+              <NumberInput
+                // Empty rather than a made-up number: the field must not claim
+                // a width the selection does not have.
+                value={shared.strokeWidth ?? Number.NaN}
+                step={0.5}
+                min={0}
+                onChange={(v) =>
+                  controller.applyShared("strokeWidth", v, "Stroke width")
+                }
+              />
+            </div>
+          </Field>
+          <Field label="Fill">
+            <div className="flex items-center gap-1">
+              {shared.fill === undefined ? <Mixed /> : null}
+              <ColorInput
+                value={shared.fill ?? "#000000"}
+                onChange={(v) => controller.applyShared("fill", v, "Fill")}
+              />
+            </div>
+          </Field>
+        </div>
+      ) : (
+        <p className="text-[10px] leading-relaxed text-neutral-400">
+          None of these carry a stroke or fill of their own — a table&rsquo;s
+          borders and a bill part&rsquo;s image have their own settings, so there
+          is nothing here to share.
+        </p>
+      )}
+
+      {shared.opacity !== undefined ? (
+        <Field label="Opacity">
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              min={0}
+              max={100}
+              className="tight-range flex-1"
+              // The mean of the selection, so the slider starts somewhere real
+              // even when the objects disagree.
+              value={Math.round(shared.opacity * 100)}
+              onChange={(e) => {
+                const v = Number(e.target.value) / 100;
+                controller.previewSelection((obj) => obj.set({ opacity: v } as never));
+              }}
+              onPointerUp={() => controller.commit("Opacity")}
+            />
+            <span className="w-8 text-right text-[10px] tabular-nums text-neutral-500">
+              {Math.round(shared.opacity * 100)}%
+            </span>
+          </div>
+        </Field>
+      ) : null}
+
+      <Checkbox
+        label="Visible"
+        checked={shared.visible === true}
+        onChange={(v) => controller.applyShared("visible", v, "Visibility")}
+      />
+      <Checkbox
+        label="Locked"
+        checked={shared.locked === true}
+        onChange={(v) => controller.applyShared("locked", v, "Lock")}
+      />
+
+      <p className="text-[10px] leading-relaxed text-neutral-400">
+        A dash means the selection does not agree yet; pick a value and it
+        applies to every object that has one. {state.objectCount} objects in
+        document.
+      </p>
+    </Panel>
+  );
+}
+
+/**
+ * Marks a property the selection does not agree on.
+ *
+ * It sits beside the control rather than replacing it: a dash has to say
+ * "mixed" without making the property impossible to set, because choosing a
+ * value for a mixed property is exactly how the disagreement is resolved.
+ */
+function Mixed() {
+  return (
+    <span
+      title="The selection does not agree on this"
+      className="flex h-7 shrink-0 items-center rounded border border-dashed border-neutral-300 px-1.5 text-[11px] text-neutral-400"
+    >
+      &mdash;
+    </span>
+  );
+}
+
 function MultiSelectPanel({
   controller,
   state,
@@ -668,6 +1052,11 @@ function MultiSelectPanel({
           ))}
         </ul>
       </Panel>
+      <MultiAppearancePanel
+        controller={controller}
+        state={state}
+        selected={selected}
+      />
       <Panel title="Align">
         <div className="grid grid-cols-3 gap-1">
           {(
@@ -691,9 +1080,24 @@ function MultiSelectPanel({
         </div>
       </Panel>
       <Panel title="Group">
+        <div className="grid grid-cols-2 gap-1">
+          <Button
+            onClick={() => controller.groupSelection()}
+            title="Ctrl+G"
+          >
+            Group
+          </Button>
+          <Button
+            onClick={() => controller.ungroupSelection()}
+            title="Ctrl+Shift+G"
+          >
+            Ungroup
+          </Button>
+        </div>
         <p className="text-[10px] leading-relaxed text-neutral-400">
-          Grouping is represented in the template by a shared parent id rather
-          than a Fabric group, so traced geometry keeps exact coordinates.
+          A group moves and selects as one structure. Groups are an editing aid
+          only — the exported bill is identical either way. Ungroup dissolves one
+          without deleting anything.
         </p>
       </Panel>
       <p className="px-3 py-2 text-[10px] text-neutral-400">

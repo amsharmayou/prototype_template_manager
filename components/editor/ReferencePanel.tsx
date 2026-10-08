@@ -52,11 +52,18 @@ export default function ReferencePanel({
         checked={state.referenceVisible}
         onChange={(v) => controller.setReferenceVisible(v)}
       />
+
       <Checkbox
-        label={state.referenceLocked ? "🔒 Reference locked" : "Reference unlocked"}
-        checked={state.referenceLocked}
-        onChange={(v) => controller.setReferenceLocked(v)}
+        label="Whiten paper on new parts"
+        checked={state.normaliseBillParts}
+        onChange={(v) => controller.setNormaliseBillParts(v)}
       />
+
+      <p className="text-[10px] leading-relaxed text-neutral-400">
+        Bill Part cuts can either keep the paper&rsquo;s own colour or whiten it
+        away. This sets the default for new cuts; each part keeps its own choice
+        and can be re-cut from its Bill Part panel.
+      </p>
 
       <Button
         variant="danger"

@@ -14,8 +14,11 @@ const TOOL_ICONS: Record<ToolId, string> = {
   text: "T",
   table: "▦",
   hr: "―",
-  vr: "│",
-  "image-placeholder": "▧",
+  vr: "¦",
+  "image-placeholder": "▣",
+  "bill-part": "✂",
+  field: "◈",
+  eyedropper: "◍",
 };
 
 const ORDER: ToolId[] = [
@@ -31,6 +34,9 @@ const ORDER: ToolId[] = [
   "text",
   "table",
   "image-placeholder",
+  "bill-part",
+  "field",
+  "eyedropper",
 ];
 
 const SHORTCUTS: Partial<Record<ToolId, string>> = {
@@ -42,8 +48,11 @@ const SHORTCUTS: Partial<Record<ToolId, string>> = {
   text: "T",
   table: "G",
   "image-placeholder": "I",
+  "bill-part": "B",
+  field: "F",
   hr: "H",
   freehand: "E",
+  eyedropper: "K",
 };
 
 export default function ToolRail({

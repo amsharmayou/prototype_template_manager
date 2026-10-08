@@ -20,7 +20,9 @@ export type ObjectType =
   | "vr"
   | "table"
   | "image-placeholder"
-  | "group";
+  | "field"
+  | "group"
+  | "bill-part";
 
 /** Fields shared by every template object. */
 export interface TemplateObjectBase {
@@ -69,7 +71,7 @@ export interface PolygonObject extends TemplateObjectBase {
 
 export interface FreehandObject extends TemplateObjectBase {
   type: "freehand";
-  /** Absolute document-space path, relative to the object origin. */
+  /** SVG path data, e.g. "M 0 0 L 100 50". Relative to the object origin. */
   path: string;
 }
 
@@ -91,6 +93,28 @@ export interface TextObject extends TemplateObjectBase {
   roleKind: TextRoleKind;
   /** Vertical alignment within the text box. */
   textVerticalAlign: "top" | "middle" | "bottom";
+  /**
+   * When present the box wraps at this width and grows downward; absent means
+   * the auto-width single-line behaviour a plain text box has always had.
+   *
+   * Only Fabric's `Textbox` can wrap — on an `IText`, `width` is not a layout
+   * property and is discarded on the next layout pass — so a wrapped box is a
+   * different canvas class. This is the unscaled width, matching `scaleX`.
+   */
+  wrapWidth?: number;
+  /**
+   * The stretch a side or diagonal drag left on the object. Fabric never folds
+   * it into `fontSize`: the drag only moves `scaleX`/`scaleY` and leaves
+   * `width`/`height` at the unscaled text metrics. Both default to 1, so a
+   * template written before these existed renders unchanged.
+   *
+   * The renderer applies them as a CSS `transform: scale()` about the box's
+   * top-left, which is what Fabric scales about, so glyphs stretch exactly as
+   * they did on the canvas. `width`/`height` therefore stay the *unscaled*
+   * metrics and describe the text's own layout box, not its painted size.
+   */
+  scaleX?: number;
+  scaleY?: number;
 }
 
 export interface TableCell {
@@ -98,6 +122,8 @@ export interface TableCell {
   textAlign: TextAlign;
   fontSize: number;
   fontWeight: "normal" | "bold";
+  /** Optional per-cell ink. Falls back to the table's cell/header text colour. */
+  color?: string;
 }
 
 export interface TableObject extends TemplateObjectBase {
@@ -134,10 +160,63 @@ export interface ImagePlaceholderObject extends TemplateObjectBase {
   type: "image-placeholder";
   placeholderRole: ImagePlaceholderRole;
   label: string;
+  /**
+   * Data URL (or remote URL the runtime can load) injected when a dynamic
+   * value is bound to this placeholder. Absent for an empty traced slot.
+   */
+  src?: string;
+}
+
+export interface SourceRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BillPartObject extends TemplateObjectBase {
+  type: "bill-part";
+  /** Embedded crop, normalised for white paper. */
+  src?: string;
+  normalized?: boolean;
+  sourceRect?: SourceRect;
 }
 
 export interface GroupObject extends TemplateObjectBase {
   type: "group";
+}
+
+export type FieldType =
+  | "text"
+  | "number"
+  | "date"
+  | "currency"
+  | "tickmark"
+  | "checkbox";
+
+/**
+ * A standalone dynamic slot placed with the field tool. Unlike a `{{token}}`
+ * inside a text box, a field carries its own identity (key + input type) and
+ * renders as a dashed marker on the canvas. The renderer paints it as the
+ * `{{key}}` text it stands for, so filling works exactly like a text token.
+ */
+export interface FieldObject extends TemplateObjectBase {
+  type: "field";
+  /** Form key, e.g. `invoice_date`. */
+  key: string;
+  /** Input kind produced on `/render` and in the share kit. */
+  fieldType: FieldType;
+  /** Always `{{key}}`; kept so fillTemplate treats it like a text token. */
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  textAlign: TextAlign;
+  lineHeight: number;
+  charSpacing: number;
+  roleKind: "variable";
+  textVerticalAlign: "top";
 }
 
 export type TemplateObject =
@@ -148,6 +227,8 @@ export type TemplateObject =
   | TextObject
   | TableObject
   | ImagePlaceholderObject
+  | BillPartObject
+  | FieldObject
   | GroupObject;
 
 export interface TemplateDocument {
@@ -155,10 +236,44 @@ export interface TemplateDocument {
   height: number;
 }
 
+export type PlaceholderType =
+  | "text"
+  | "number"
+  | "date"
+  | "currency"
+  | "tickmark"
+  | "checkbox";
+
+/**
+ * Per-key contract for a dynamic slot. Lives in the template itself, so a
+ * generated form and a styled rendered document travel together. All fields
+ * are optional: anything the template author skips falls back to the
+ * renderer's default inference (label from the key, type from token name,
+ * no max-length, style inherited from the host text box / table).
+ */
+export interface PlaceholderSpec {
+  /** The `{{token}}` key, or the image slot's placeholderRole. */
+  key: string;
+  /** Form-side label. */
+  label?: string;
+  /** Input kind produced on `/render` and in the share kit. */
+  type?: PlaceholderType;
+  /** Max length of the form input (text only). */
+  maxLength?: number;
+  /** Style of the rendered value when this key carries the whole text. */
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: "normal" | "bold";
+  fontStyle?: "normal" | "italic";
+  color?: string;
+}
+
 export interface TemplateMeta {
   name: string;
   /** ISO timestamp. */
   modifiedAt: string;
+  /** Per-key placeholder contracts. */
+  placeholders?: PlaceholderSpec[];
 }
 
 export interface BillTemplate {
@@ -191,6 +306,10 @@ export function isImagePlaceholder(
   o: TemplateObject,
 ): o is ImagePlaceholderObject {
   return o.type === "image-placeholder";
+}
+
+export function isFieldObject(o: TemplateObject): o is FieldObject {
+  return o.type === "field";
 }
 
 export function isLineLike(

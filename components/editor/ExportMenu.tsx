@@ -3,13 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Controls";
-import { downloadJson } from "@/lib/export/download";
+import { downloadJson, downloadText, safeFilename } from "@/lib/export/download";
 import { exportDocx } from "@/lib/export/toDocx";
 import { exportPdf } from "@/lib/export/toPdf";
 import { exportJson, exportPng, exportSvg } from "@/lib/export/toSvg";
+import { renderHtml } from "@/lib/render";
 import type { EditorController } from "@/lib/canvas/EditorController";
 
-type ExportItem = "json" | "svg" | "pdf" | "docx" | "png";
+type ExportItem = "json" | "svg" | "pdf" | "docx" | "png" | "html";
 
 const ITEMS: Array<{ id: ExportItem; label: string; hint: string }> = [
   { id: "json", label: "JSON Template", hint: "Reusable template format" },
@@ -17,6 +18,7 @@ const ITEMS: Array<{ id: ExportItem; label: string; hint: string }> = [
   { id: "pdf", label: "PDF", hint: "Document sized page" },
   { id: "docx", label: "DOCX", hint: "Native Word tables & text" },
   { id: "png", label: "Preview PNG", hint: "2x raster" },
+  { id: "html", label: "HTML Document", hint: "Self-contained, no scripts" },
 ];
 
 export default function ExportMenu({ controller }: { controller: EditorController }) {
@@ -44,6 +46,14 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
       if (item === "pdf") await exportPdf(template);
       if (item === "docx") await exportDocx(template);
       if (item === "png") await exportPng(template, 2);
+      if (item === "html") {
+        const result = renderHtml(template);
+        downloadText(
+          result.html,
+          `${safeFilename(String(template.meta?.name ?? ""))}.html`,
+          "text/html;charset=utf-8",
+        );
+      }
     } catch (e) {
       // Surface the full stack in development; the UI only shows the message.
       if (process.env.NODE_ENV !== "production") {

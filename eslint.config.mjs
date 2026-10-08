@@ -14,6 +14,8 @@ const eslintConfig = [
       "playwright-report/**",
       ".playwright-mcp/**",
       "next-env.d.ts",
+      // Built artifact, not source: `npm run build:share` regenerates it.
+      "public/sharekit.js",
     ],
   },
 ];

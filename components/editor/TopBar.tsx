@@ -1,11 +1,15 @@
-"use client";
+﻿"use client";
 
 import { useRef } from "react";
+import { useRouter } from "next/navigation";
 
 import ExportMenu from "./ExportMenu";
 import { Button } from "@/components/ui/Controls";
 import type { EditorController, EditorState } from "@/lib/canvas/EditorController";
 import { exportJson } from "@/lib/export/toSvg";
+import { downloadText, safeFilename } from "@/lib/export/download";
+import { buildShareDocument } from "@/lib/share/document";
+import { saveTemplate, setPendingTemplate } from "@/lib/client/templateStore";
 import type { BillTemplate } from "@/lib/template/types";
 
 export default function TopBar({
@@ -25,6 +29,7 @@ export default function TopBar({
 }) {
   const imageInput = useRef<HTMLInputElement | null>(null);
   const jsonInput = useRef<HTMLInputElement | null>(null);
+  const router = useRouter();
 
   return (
     <header className="flex items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2">
@@ -35,6 +40,46 @@ export default function TopBar({
       <Button onClick={onOpenImage}>Open Bill</Button>
       <Button onClick={() => exportJson(controller.getTemplate())}>
         Save Template
+      </Button>
+      <Button
+        onClick={() =>
+          saveTemplate(state.documentName || "Untitled bill template", controller.getTemplate())
+        }
+      >
+        Save to My Templates
+      </Button>
+      <Button
+        onClick={() => {
+          setPendingTemplate(controller.getTemplate());
+          router.push("/render");
+        }}
+        variant="primary"
+      >
+        Fill &amp; Render →
+      </Button>
+      <Button
+        onClick={async () => {
+          try {
+            const response = await fetch("/sharekit.js");
+            if (!response.ok) {
+              throw new Error(`share kit unavailable (${response.status})`);
+            }
+            const kit = await response.text();
+            downloadText(
+              buildShareDocument(controller.getTemplate(), kit),
+              `${safeFilename(state.documentName || "template")}.html`,
+              "text/html;charset=utf-8",
+            );
+          } catch (error) {
+            window.alert(
+              `Could not build the shareable file.\n\n${error instanceof Error ? error.message : String(error)}\n\n` +
+                "Run `npm run build:share` and reload.",
+            );
+          }
+        }}
+        title="Download one offline HTML file that fills, previews and prints this template"
+      >
+        Share as .html
       </Button>
       <input
         ref={imageInput}

@@ -1,9 +1,37 @@
 "use client";
 
-import { StaticCanvas } from "fabric";
+import { FabricImage, StaticCanvas } from "fabric";
 
 import { hydrateTemplate } from "@/lib/template/hydrate";
 import type { BillTemplate } from "@/lib/template/types";
+
+/**
+ * Decode every image a template references up front, so hydration can swap the
+ * dashed placeholder boxes and the dashed crop slots for real images
+ * synchronously. A source that fails to decode is simply absent from the
+ * registry, and the placeholder box renders in its place.
+ */
+async function preloadImages(
+  template: BillTemplate,
+): Promise<Map<string, FabricImage>> {
+  const registry = new Map<string, FabricImage>();
+  await Promise.all(
+    template.objects.map(async (o) => {
+      // A bill part brings its own crop: that embedded `src` is what the
+      // template stores and what the export paints, so there is nothing to
+      // borrow from the authoring reference here.
+      if (o.type !== "image-placeholder" && o.type !== "bill-part") return;
+      const src = typeof o.src === "string" ? o.src : undefined;
+      if (!src || registry.has(src)) return;
+      try {
+        registry.set(src, await FabricImage.fromURL(src, { crossOrigin: "anonymous" }));
+      } catch {
+        registry.delete(src);
+      }
+    }),
+  );
+  return registry;
+}
 
 /**
  * Render a template into a throwaway, document-sized canvas.
@@ -24,7 +52,8 @@ export async function renderTemplate(
     enableRetinaScaling: false,
   });
 
-  const objects = hydrateTemplate(template);
+  const images = await preloadImages(template);
+  const objects = hydrateTemplate(template, images);
   for (const o of objects) {
     if (scale !== 1) {
       o.set({

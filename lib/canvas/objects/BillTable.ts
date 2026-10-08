@@ -16,6 +16,8 @@ import {
   totalWidth,
   type CellRect,
 } from "@/lib/template/geometry";
+import { gridSegments } from "@/lib/canvas/tableGrid";
+import { DEFAULT_STROKE_WIDTH } from "@/lib/canvas/strokeDefaults";
 import type { TableCell, TextAlign } from "@/lib/template/types";
 
 export interface BillTableSpec {
@@ -49,7 +51,9 @@ export const DEFAULT_TABLE_SPEC: BillTableSpec = {
   rowHeights: [30, 30],
   cells: [],
   borderColor: "#000000",
-  borderWidth: 1,
+  // The same width every outline tool draws with, so a traced table's grid
+  // matches the lines traced around it. See `strokeDefaults`.
+  borderWidth: DEFAULT_STROKE_WIDTH,
   cellFill: "transparent",
   headerRow: true,
   headerFill: "transparent",
@@ -334,52 +338,68 @@ export class BillTable extends FabricObject {
   }
 
   addColumn(at = this.columns, width?: number): void {
+    const snapshot = { rows: this.rows, cols: this.columns, cells: this.cells.map((c) => ({ ...c })) };
     const w = width ?? Math.max(24, Math.round(totalWidth(this.colWidths) / this.columns));
     const next = [...this.colWidths];
     next.splice(Math.max(0, Math.min(at, next.length)), 0, w);
     this.colWidths = next;
     this.syncDimensions();
     this.ensureSize();
-    this.reindexCellsForShapeChange();
+    this.relocateCells(snapshot, (r, c) => ({ row: r, col: c >= at ? c + 1 : c }));
   }
 
   addRow(at = this.rows, height?: number): void {
+    const snapshot = { rows: this.rows, cols: this.columns, cells: this.cells.map((c) => ({ ...c })) };
     const h = height ?? Math.max(20, Math.round(totalHeight(this.rowHeights) / this.rows));
     const next = [...this.rowHeights];
     next.splice(Math.max(0, Math.min(at, next.length)), 0, h);
     this.rowHeights = next;
     this.syncDimensions();
-    this.reindexCellsForShapeChange();
+    this.relocateCells(snapshot, (r, c) => ({ row: r >= at ? r + 1 : r, col: c }));
   }
 
   removeColumn(index: number): void {
     if (this.columns <= 1 || index < 0 || index >= this.columns) return;
+    const snapshot = { rows: this.rows, cols: this.columns, cells: this.cells.map((c) => ({ ...c })) };
     this.colWidths = this.colWidths.filter((_, i) => i !== index);
     this.syncDimensions();
-    this.reindexCellsForShapeChange();
+    this.relocateCells(snapshot, (r, c) =>
+      c === index ? null : { row: r, col: c > index ? c - 1 : c },
+    );
   }
 
   removeRow(index: number): void {
     if (this.rows <= 1 || index < 0 || index >= this.rows) return;
+    const snapshot = { rows: this.rows, cols: this.columns, cells: this.cells.map((c) => ({ ...c })) };
     this.rowHeights = this.rowHeights.filter((_, i) => i !== index);
     this.syncDimensions();
-    this.reindexCellsForShapeChange();
+    this.relocateCells(snapshot, (r, c) =>
+      r === index ? null : { row: r > index ? r - 1 : r, col: c },
+    );
   }
 
   /**
    * After a column/row count change, carry existing cell content over by
    * absolute (row, column) wherever the new grid still has a slot.
    */
-  private reindexCellsForShapeChange(): void {
-    const previous = this.cells.map((c) => ({ ...c }));
-    const previousCols = Math.max(1, Math.round(Math.sqrt(previous.length)) || 1);
+  private relocateCells(
+    snapshot: { rows: number; cols: number; cells: TableCell[] },
+    mapPosition: (r: number, c: number) => { row: number; col: number } | null,
+  ): void {
     const next = makeCells(this.rows, this.columns);
-    const limit = Math.min(previous.length, next.length);
-    for (let i = 0; i < limit; i++) {
-      const row = Math.floor(i / previousCols);
-      const column = i % previousCols;
-      if (row < this.rows && column < this.columns) {
-        next[row * this.columns + column] = { ...previous[i]! };
+    const expected = snapshot.rows * snapshot.cols;
+    for (let i = 0; i < expected && i < snapshot.cells.length; i++) {
+      const r = Math.floor(i / snapshot.cols);
+      const c = i % snapshot.cols;
+      const target = mapPosition(r, c);
+      if (
+        target &&
+        target.row >= 0 &&
+        target.row < this.rows &&
+        target.col >= 0 &&
+        target.col < this.columns
+      ) {
+        next[target.row * this.columns + target.col] = { ...snapshot.cells[i]! };
       }
     }
     this.cells = next;
@@ -488,18 +508,9 @@ export class BillTable extends FabricObject {
       ctx.fillRect(x, y, r.width, r.height);
     }
 
-    if (this.borderWidth > 0 && this.borderColor) {
-      ctx.strokeStyle = this.borderColor;
-      ctx.lineWidth = this.borderWidth;
-      // Inset by half the stroke so the grid stays inside the object box.
-      const h = this.borderWidth / 2;
-      ctx.strokeRect(
-        x + h,
-        y + h,
-        Math.max(0, r.width - this.borderWidth),
-        Math.max(0, r.height - this.borderWidth),
-      );
-    }
+    // The grid's own lines are not drawn here. They belong to the whole table
+    // rather than to any one cell, and painting them per cell stroked every
+    // interior edge twice; see `paintGrid` and `gridSegments`.
 
     const text = cell.text;
     if (!text) return;
@@ -543,6 +554,40 @@ export class BillTable extends FabricObject {
     return { x: -(this.width ?? 0) / 2, y: -(this.height ?? 0) / 2 };
   }
 
+  /**
+   * Stroke every grid line exactly once.
+   *
+   * The grid used to come from one `strokeRect` per cell, which stroked each
+   * interior edge twice — once from each neighbouring cell — while the outer
+   * frame was stroked once. Two strokes over the same pixels darken the line and
+   * thicken it through anti-aliasing, so the inside of the grid looked heavier
+   * than its own border. Walking `gridSegments` instead strokes every edge
+   * once, which is what makes a table's lines all identical.
+   *
+   * Half the stroke is inset so the grid stays inside the object's box and
+   * lines meet cleanly at the corners rather than overshooting.
+   */
+  private paintGrid(ctx: CanvasRenderingContext2D, ox: number, oy: number): void {
+    if (this.borderWidth <= 0 || !this.borderColor) return;
+    const half = this.borderWidth / 2;
+    ctx.save();
+    ctx.strokeStyle = this.borderColor;
+    ctx.lineWidth = this.borderWidth;
+    ctx.beginPath();
+    for (const seg of gridSegments(this.colWidths, this.rowHeights)) {
+      if (seg.vertical) {
+        // Inset from both ends so the line's caps stay within the grid.
+        ctx.moveTo(ox + seg.at + half, oy + half);
+        ctx.lineTo(ox + seg.at + half, oy + seg.length - half);
+      } else {
+        ctx.moveTo(ox + half, oy + seg.at + half);
+        ctx.lineTo(ox + seg.length - half, oy + seg.at + half);
+      }
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
   override _render(ctx: CanvasRenderingContext2D): void {
     const { x: ox, y: oy } = this.originOffset();
     for (let r = 0; r < this.rows; r++) {
@@ -550,6 +595,8 @@ export class BillTable extends FabricObject {
         this.paintCell(ctx, r, c, ox, oy);
       }
     }
+    // After the cells, so a cell fill or text can never paint over a line.
+    this.paintGrid(ctx, ox, oy);
     this.paintActiveCell(ctx, ox, oy);
   }
 
@@ -609,11 +656,8 @@ export class BillTable extends FabricObject {
             `<rect x="${x}" y="${y}" width="${rect.width}" height="${rect.height}" fill="${fill}" />`,
           );
         }
-        if (this.borderWidth > 0 && this.borderColor) {
-          parts.push(
-            `<rect x="${x}" y="${y}" width="${rect.width}" height="${rect.height}" fill="none" stroke="${this.borderColor}" stroke-width="${this.borderWidth}" />`,
-          );
-        }
+        // No per-cell stroke here: it is emitted once for the whole grid
+        // below, so every line has the same weight in the exported SVG too.
         if (cell.text) {
           const pad = this.padding;
           let anchor = "start";
@@ -628,6 +672,26 @@ export class BillTable extends FabricObject {
           const ty = y + rect.height / 2;
           parts.push(
             `<text x="${tx}" y="${ty}" font-family="${this.fontFamily}" font-size="${cell.fontSize}" font-weight="${cell.fontWeight}" text-anchor="${anchor}" dominant-baseline="central" fill="${header ? this.headerTextColor : this.cellTextColor}">${this.esc(cell.text)}</text>`,
+          );
+        }
+      }
+    }
+
+    // One stroke per grid line, mirroring `paintGrid`. A `<rect>` per cell would
+    // stroke every interior edge twice and make the exported grid's inside
+    // darker than its frame.
+    if (this.borderWidth > 0 && this.borderColor) {
+      const half = this.borderWidth / 2;
+      const shared =
+        `fill="none" stroke="${this.borderColor}" stroke-width="${this.borderWidth}"`;
+      for (const seg of gridSegments(this.colWidths, this.rowHeights)) {
+        if (seg.vertical) {
+          parts.push(
+            `<line x1="${ox + seg.at + half}" y1="${oy + half}" x2="${ox + seg.at + half}" y2="${oy + seg.length - half}" ${shared} />`,
+          );
+        } else {
+          parts.push(
+            `<line x1="${ox + half}" y1="${oy + seg.at + half}" x2="${ox + seg.length - half}" y2="${oy + seg.at + half}" ${shared} />`,
           );
         }
       }

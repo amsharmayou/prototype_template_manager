@@ -8,13 +8,16 @@
 import { cellIndex } from "@/lib/template/geometry";
 import { analysePlaceholders } from "@/lib/template/placeholders";
 import type {
+  BillPartObject,
   BillTemplate,
+  FieldObject,
   FreehandObject,
   GroupObject,
   ImagePlaceholderObject,
   LineObject,
   PolygonObject,
   ShapeObject,
+  SourceRect,
   TableCell,
   TableObject,
   TemplateObject,
@@ -52,6 +55,20 @@ const num = (v: unknown, fallback = 0): number =>
 const str = (v: unknown, fallback = ""): string =>
   typeof v === "string" ? v : fallback;
 
+/**
+ * Fabric 7 stores a Path's geometry as an array of command tuples, and exports
+ * neither `joinPath` nor `getPathCommandsInfo`, so the SVG path data is built
+ * here. `new Path(<data>)` parses this back into the same tuples, so
+ * `hydrateFreehand` needs no change.
+ */
+function pathData(commands: unknown): string {
+  if (!Array.isArray(commands)) return "";
+  return commands
+    .filter((c): c is unknown[] => Array.isArray(c) && typeof c[0] === "string")
+    .map((c) => `${c[0]} ${c.slice(1).join(" ")}`)
+    .join(" ");
+}
+
 /** Normalised, unrotated box for an object, in document coordinates. */
 export function objectBox(o: SerialisableObject): {
   x: number;
@@ -59,10 +76,11 @@ export function objectBox(o: SerialisableObject): {
   width: number;
   height: number;
 } {
-  const w =
-    o.getScaledWidth?.() ?? num(o.width) * num(o.scaleX, 1);
-  const h =
-    o.getScaledHeight?.() ?? num(o.height) * num(o.scaleY, 1);
+  // The template box tracks the object's own width/height, not Fabric's
+  // stroke-inclusive scaled width: a 1px border on a 80px box must not take
+  // the template's width to 81pt over a save↔reload cycle.
+  const w = num(o.width) * num(o.scaleX, 1);
+  const h = num(o.height) * num(o.scaleY, 1);
   const center = o.getCenterPoint?.();
   if (center) {
     return {
@@ -120,6 +138,7 @@ export function defaultName(type: string, index: number): string {
     text: "Text",
     table: "Table",
     "image-placeholder": "Image Placeholder",
+    "bill-part": "Bill Part",
     group: "Group",
     iText: "Text",
     textbox: "Text",
@@ -166,6 +185,7 @@ function serialiseTable(
       textAlign: (c?.textAlign ?? "left") as TableCell["textAlign"],
       fontSize: num(c?.fontSize, 12),
       fontWeight: (c?.fontWeight ?? "normal") as TableCell["fontWeight"],
+      ...(typeof c?.color === "string" && c.color.length > 0 ? { color: c.color } : {}),
     });
   }
   return {
@@ -192,10 +212,22 @@ function serialiseText(o: SerialisableObject, zIndex: number): TextObject {
   const base = baseFields(o, zIndex);
   const text = str(o.text, "");
   const info = analysePlaceholders(text);
+  // Fabric never folds a side/diagonal drag into `fontSize`: the drag only
+  // moves `scaleX`/`scaleY` and leaves `width`/`height` at the unscaled text
+  // metrics. `baseFields` multiplies the box by that scale, which cannot
+  // describe the result on its own — a 2x-wide 1.5x-tall stretch has no font
+  // size that reproduces it — so the text branch records the metrics Fabric
+  // really holds plus the scale beside them, and the renderer re-applies it.
+  const scaleX = num(o.scaleX, 1);
+  const scaleY = num(o.scaleY, 1);
   return {
     ...base,
     type: "text",
     text,
+    width: Math.round(num(o.width) * 100) / 100,
+    height: Math.round(num(o.height) * 100) / 100,
+    scaleX,
+    scaleY,
     fontFamily: str(o.fontFamily, "Arial"),
     fontSize: num(o.fontSize, 14),
     fontWeight:
@@ -208,7 +240,13 @@ function serialiseText(o: SerialisableObject, zIndex: number): TextObject {
     lineHeight: num(o.lineHeight, 1.16),
     charSpacing: num(o.charSpacing, 0),
     roleKind: str(o.roleKind) === "variable" ? "variable" : info.roleKind,
-    textVerticalAlign: "top",
+    textVerticalAlign: (str(
+      o.textVerticalAlign,
+      "top",
+    ) as TextObject["textVerticalAlign"]),
+    // Only a box that actually wraps carries a wrap width, so an auto-width box
+    // stays on the long-standing single-line behaviour.
+    ...(num(o.wrapWidth) > 0 ? { wrapWidth: num(o.wrapWidth) } : {}),
   };
 }
 
@@ -216,7 +254,7 @@ function serialiseImagePlaceholder(
   o: SerialisableObject,
   zIndex: number,
 ): ImagePlaceholderObject {
-  return {
+  const out: ImagePlaceholderObject = {
     ...baseFields(o, zIndex),
     type: "image-placeholder",
     placeholderRole: str(
@@ -225,12 +263,70 @@ function serialiseImagePlaceholder(
     ) as ImagePlaceholderObject["placeholderRole"],
     label: str(o.label, "IMAGE"),
   };
+  // A filled slot (e.g. after a dynamic-value pass) keeps its bound src so a
+  // save/reload cycle does not detach the image from its placeholder.
+  if (typeof o.src === "string" && o.src.length > 0) out.src = o.src;
+  return out;
+}
+
+function serialiseBillPart(
+  o: SerialisableObject,
+  zIndex: number,
+): BillPartObject {
+  const sourceRect =
+    o.sourceRect &&
+    typeof o.sourceRect === "object" &&
+    typeof (o.sourceRect as SourceRect).x === "number" &&
+    typeof (o.sourceRect as SourceRect).y === "number" &&
+    typeof (o.sourceRect as SourceRect).width === "number" &&
+    typeof (o.sourceRect as SourceRect).height === "number"
+      ? (o.sourceRect as SourceRect)
+      : undefined;
+  return {
+    ...baseFields(o, zIndex),
+    type: "bill-part",
+    ...(typeof o.src === "string" && o.src.length > 0 ? { src: o.src } : {}),
+    normalized: o.normalized === true,
+    ...(sourceRect ? { sourceRect } : {}),
+  };
+}
+
+function serialiseField(o: SerialisableObject, zIndex: number): FieldObject {
+  const key = str(o.key, "field");
+  return {
+    ...baseFields(o, zIndex),
+    type: "field",
+    // A field's `fill` means two different things: on the canvas it is the tint
+    // behind the dashed box, and in a template `renderText` reads it as the
+    // value's ink. Copying the tint through would print every value in a
+    // 6%-alpha blue, so the ink travels instead and the tint stays in the
+    // editor where it belongs.
+    fill: str(o.textColor, "#000000") || "#000000",
+    key,
+    fieldType: str(o.fieldType, "text") as FieldObject["fieldType"],
+    text: `{{${key}}}`,
+    fontFamily: str(o.fontFamily, "Arial"),
+    fontSize: num(o.fontSize, 14),
+    fontWeight: str(o.fontWeight, "normal") === "bold" ? "bold" : "normal",
+    fontStyle: str(o.fontStyle, "normal") === "italic" ? "italic" : "normal",
+    textAlign: (str(o.textAlign, "left") as FieldObject["textAlign"]),
+    lineHeight: num(o.lineHeight, 1.16),
+    charSpacing: num(o.charSpacing, 0),
+    roleKind: "variable",
+    textVerticalAlign: "top",
+  };
 }
 
 function serialiseLine(o: SerialisableObject, zIndex: number): LineObject {
   const base = baseFields(o, zIndex);
-  const x1 = base.x;
-  const y1 = base.y;
+  // Both endpoints come from the object's own geometry, never from
+  // `objectBox`. That box is centred on Fabric's stroke-inclusive bounds, and
+  // a rule's stroke straddles the line, so the box's centre sits half a
+  // stroke off the true endpoints. Reading `x`/`y` from the box while reading
+  // `x2`/`y2` off the object therefore tilted a level rule, and the tilt grew
+  // by half a stroke on every save/reload cycle.
+  const x1 = num(o.left);
+  const y1 = num(o.top);
   const x2 = num(o.x2, x1 + base.width);
   const y2 = num(o.y2, y1 + base.height);
   // Fabric has no distinct rule class, so the intended kind is recorded on
@@ -238,7 +334,25 @@ function serialiseLine(o: SerialisableObject, zIndex: number): LineObject {
   const kind = str(o.ruleKind, "") || str(o.appType, "") || o.type;
   const type: LineObject["type"] =
     kind === "hr" ? "hr" : kind === "vr" ? "vr" : "line";
-  return { ...base, type, x2, y2 };
+  // A rule carries an axis as its whole purpose, so the level it was drawn at
+  // is restored exactly rather than inferred. `updateDrawing` pins only the far
+  // endpoint (`y2 = origin.y` for a horizontal rule) and leaves `top` at
+  // whatever Fabric last computed, so the two disagree by up to half a stroke;
+  // averaging them would leave a visible tilt. Taking the far endpoint as
+  // authoritative makes the stored rule exactly level, which is both what the
+  // author drew and a fixed point over repeated saves.
+  const endX = type === "vr" ? x1 : x2;
+  const endY = type === "hr" ? y1 : y2;
+  return {
+    ...base,
+    x: x1,
+    y: y1,
+    width: Math.round((endX - x1) * 100) / 100,
+    height: Math.round((endY - y1) * 100) / 100,
+    type,
+    x2: endX,
+    y2: endY,
+  };
 }
 
 function serialisePolygon(
@@ -263,7 +377,7 @@ function serialiseFreehand(
   return {
     ...baseFields(o, zIndex),
     type: "freehand",
-    path: str(o.path, ""),
+    path: pathData(o.path),
   };
 }
 
@@ -285,6 +399,10 @@ export function serialiseObject(
       return serialiseTable(o, zIndex);
     case "image-placeholder":
       return serialiseImagePlaceholder(o, zIndex);
+    case "bill-part":
+      return serialiseBillPart(o, zIndex);
+    case "field":
+      return serialiseField(o, zIndex);
     case "itext":
     case "textbox":
     case "text":

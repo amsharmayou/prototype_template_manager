@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "fixture": "tsx e2e/make-fixture.ts"
+    "fixture": "tsx e2e/make-fixture.ts",
+    "build:share": "esbuild lib/share/main.ts --bundle --minify --format=iife --target=es2019 --outfile=public/sharekit.js"
   },
   "dependencies": {
     "docx": "^9.8.1",

@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useRouter } from "next/navigation";
+
 import CanvasStage from "./CanvasStage";
 import LayersPanel from "./LayersPanel";
+import PlaceholdersPanel from "./PlaceholdersPanel";
 import PropertiesPanel from "./PropertiesPanel";
 import ReferencePanel from "./ReferencePanel";
 import ToolRail from "./ToolRail";
@@ -23,11 +26,13 @@ import {
 } from "@/hooks/useEditorController";
 import { emptyTemplate, type BillTemplate } from "@/lib/template/types";
 import { exportJson } from "@/lib/export/toSvg";
+import { setPendingTemplate } from "@/lib/client/templateStore";
 
 type Stage = "upload" | "editor";
 
 export default function BillEditor() {
   const { controller, state } = useEditorController();
+  const router = useRouter();
   const [stage, setStage] = useState<Stage>("upload");
   const [preview, setPreview] = useState(false);
   const imageInput = useRef<HTMLInputElement | null>(null);
@@ -66,6 +71,16 @@ export default function BillEditor() {
     [controller],
   );
 
+  // The no-editor path: pick a template file, hand it straight to the
+  // renderer, which derives its dynamic form from the placeholders inside.
+  const handleTemplateForRender = useCallback(
+    (t: BillTemplate) => {
+      setPendingTemplate(t);
+      router.push("/render");
+    },
+    [router],
+  );
+
   useKeyboardShortcuts(controller, {
     save: () => exportJson(controller.getTemplate()),
   });
@@ -94,7 +109,7 @@ export default function BillEditor() {
   const [gridOpen, setGridOpen] = useState(false);
 
   if (stage === "upload") {
-    return <UploadScreen onImage={handleImage} onTemplate={handleTemplate} />;
+    return <UploadScreen onImage={handleImage} onTemplate={handleTemplate} onTemplateForRender={handleTemplateForRender} />;
   }
 
   return (
@@ -161,10 +176,18 @@ export default function BillEditor() {
               >
                 New blank document
               </Button>
+              <Button
+                variant={state.structureLocked ? "primary" : "default"}
+                className="w-full"
+                onClick={() => controller.setStructureLocked(!state.structureLocked)}
+              >
+                {state.structureLocked ? "Unlock structure" : "Lock structure"}
+              </Button>
               <p className="text-[10px] text-neutral-400">
                 {state.document.width} × {state.document.height} px
               </p>
             </Panel>
+            <PlaceholdersPanel controller={controller} state={state} />
           </aside>
         )}
 
@@ -301,6 +324,16 @@ function GridSettingsDialog({
           checked={state.snapToGrid}
           onChange={(v) => controller.setSnapEnabled(v)}
         />
+        <Checkbox
+          label="Snap to objects"
+          checked={state.snapToObjects}
+          onChange={(v) => controller.setSnapToObjects(v)}
+        />
+        <Checkbox
+          label="Full-span rules"
+          checked={state.fullSpanRules}
+          onChange={(v) => controller.setFullSpanRules(v)}
+        />
       </div>
       <p className="text-[10px] text-neutral-400">
         Snap rounds the top-left corner of an object to the nearest grid line
@@ -337,6 +370,16 @@ function StatusBar({
         <span className="font-medium text-neutral-700">{state.selection.length}</span>
       </span>
 
+      {state.sampledColour ? (
+        <span className="flex items-center gap-1.5 tabular-nums">
+          <span
+            className="inline-block h-3 w-3 rounded-full border border-neutral-300"
+            style={{ backgroundColor: state.sampledColour }}
+          />
+          <span className="font-medium text-neutral-700">{state.sampledColour}</span>
+        </span>
+      ) : null}
+
       <div className="flex-1" />
 
       <div className="flex items-center gap-1">
@@ -357,7 +400,7 @@ function StatusBar({
         </Button>
       </div>
       <span className="text-neutral-400">
-        Scroll to move · Ctrl+scroll to zoom · Space+drag to pan
+        Wheel to zoom · Space+drag to pan · Fit to reset
       </span>
     </div>
   );

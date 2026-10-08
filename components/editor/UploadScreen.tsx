@@ -12,12 +12,15 @@ import type { BillTemplate } from "@/lib/template/types";
 export default function UploadScreen({
   onImage,
   onTemplate,
+  onTemplateForRender,
 }: {
   onImage: (dataUrl: string, name: string) => void;
   onTemplate: (t: BillTemplate) => void;
+  onTemplateForRender: (t: BillTemplate) => void;
 }) {
   const imageInput = useRef<HTMLInputElement | null>(null);
   const jsonInput = useRef<HTMLInputElement | null>(null);
+  const renderInput = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
 
   const readImage = useCallback(
@@ -105,11 +108,34 @@ export default function UploadScreen({
             }
           }}
         />
+        <input
+          ref={renderInput}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (!file) return;
+            try {
+              onTemplateForRender(JSON.parse(await file.text()) as BillTemplate);
+            } catch {
+              window.alert("That file is not a valid bill template JSON.");
+            }
+          }}
+        />
 
-        <div className="mt-6 flex items-center justify-center gap-2">
+        <div className="mt-6 flex flex-col items-center justify-center gap-2">
           <Button onClick={() => jsonInput.current?.click()}>
             Open saved template instead
           </Button>
+          <Button variant="primary" onClick={() => renderInput.current?.click()}>
+            Fill &amp; Render a saved template
+          </Button>
+          <p className="max-w-sm text-center text-[10px] leading-relaxed text-neutral-400">
+            Picking from disk skips the editor and whisks this template into
+            the renderer, where its placeholders become a form.
+          </p>
         </div>
 
         <p className="mt-6 text-[11px] leading-relaxed text-neutral-400">
