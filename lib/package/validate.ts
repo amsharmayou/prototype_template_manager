@@ -50,6 +50,14 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+/**
+ * The single constructor for issues, and it always produces `"error"`.
+ *
+ * There is deliberately no warning path. `Issue` carries `Severity`, so the
+ * union has room for one, but nothing this module can decide is advisory: it
+ * sees the manifest and the file bytes, so what it can reach is exactly what is
+ * wrong. See `validatePackage` for where a warning would come from.
+ */
 function issue(path: string, message: string): Issue {
   return { severity: "error", path, message };
 }
@@ -217,7 +225,13 @@ function reportComputedCycles(
       const seen = state.get(next.key) ?? UNSEEN;
       if (seen === DONE) continue;
       if (seen === ON_STACK) {
+        // `ON_STACK` is only ever set at the moment a node is pushed, so an
+        // on-stack node is by construction present in the stack and `from` is
+        // never -1. Guarded anyway: `stack.length = -1` would throw, and this
+        // module's contract is that it never does. A contract that depends on
+        // an invariant forty lines up is not one a reader can check.
         const from = stack.indexOf(next);
+        if (from < 0) continue;
         const cycle = stack.slice(from);
         const anchor = cycle.reduce((earliest, n) =>
           n.index < earliest.index ? n : earliest,
@@ -337,9 +351,15 @@ export function validateManifest(
       return;
     }
     const key = f.key;
-    if (typeof key !== "string" || key.length === 0) {
+    // `.trim()` rather than a length test, matching `computed[].key`. A computed
+    // arg is an arbitrary manifest string, not a token, so an author really can
+    // write `args: [" "]` and land on such a field; `fieldKeys` is load-bearing
+    // for resolution in exactly the way `computedKeys` is.
+    const usable = typeof key === "string" && key.trim().length > 0;
+    const fresh = usable && !seen.has(key);
+    if (!usable) {
       out.push(issue(`fields[${i}].key`, "field has no key"));
-    } else if (seen.has(key)) {
+    } else if (!fresh) {
       out.push(issue(`fields[${i}].key`, `duplicate field key ${key}`));
     } else {
       seen.add(key);
@@ -357,11 +377,15 @@ export function validateManifest(
     if (f.pattern !== undefined && typeof f.pattern !== "string") {
       out.push(issue(`fields[${i}].pattern`, "pattern must be a string"));
     }
-    // Only repeating fields have columns, so only they can be a path head. The
-    // non-string filter keeps the map to columns a resolution could match: one
-    // that is not a string can never equal a string arg, so admitting it would
-    // only widen what resolves.
-    if (f.type === "repeating" && typeof key === "string" && key.length > 0 && !repeats.has(key)) {
+    // Only repeating fields have columns, so only they can be a path head, and
+    // only a field whose key was *accepted* becomes one: a key rejected above as
+    // a duplicate must not become the head a dotted arg resolves against, or the
+    // author is shown a resolution message about a field that was never
+    // declared. `fresh` already implies the key is unseen, so no separate
+    // `repeats.has` test is needed. The non-string filter keeps the map to
+    // columns a resolution could match: one that is not a string can never equal
+    // a string arg, so admitting it would only widen what resolves.
+    if (f.type === "repeating" && typeof key === "string" && fresh) {
       const columns = Array.isArray(f.columns) ? f.columns : [];
       repeats.set(
         key,
@@ -463,7 +487,19 @@ export function validateManifest(
   return out;
 }
 
-/** `ok` is false when at least one error was found. Warnings never block. */
+/**
+ * `ok` is false when at least one **error** was found, and that is the whole
+ * definition: `ok` means "no errors", nothing more.
+ *
+ * `Severity` also admits `"warning"`, but no rule here emits one yet — every
+ * check below is a hard failure, and inventing a soft one would be a guess. The
+ * warning exists so that the checks which *are* advisory can be added later
+ * without changing this signature or `ok`'s meaning: a host that renders
+ * `issues` verbatim already has somewhere to put them, and a warning can never
+ * flip `ok`. The advisory checks belong to the layer that can read the template
+ * bytes — things like a field no cell ever fills — which `validateManifest`
+ * deliberately does not receive.
+ */
 export function validatePackage(pkg: Package): { ok: boolean; issues: Issue[] } {
   const files = pkg?.files instanceof Map ? pkg.files : new Map<string, Uint8Array>();
   const issues = validateManifest(pkg?.manifest, files);

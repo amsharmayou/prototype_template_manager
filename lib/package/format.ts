@@ -85,6 +85,20 @@ export type ComputedOp =
   | "multiply"
   | "percent";
 
+/**
+ * One derived value.
+ *
+ * Entries in a package's `computed` list may read each other in **any** order: a
+ * forward reference is legal, so the reference graph is not required to be
+ * topologically sorted and declaration order carries no meaning.
+ *
+ * The graph **is** required to be acyclic, and the reason is order-sensitivity:
+ * whatever order an evaluator picks, some entry of a cycle will be evaluated
+ * before a value it depends on has been produced. The entry then reads nothing,
+ * contributes zero, and the bill prints a total that is quietly wrong rather than
+ * visibly broken. `validateManifest` in `lib/package/validate.ts` walks the graph
+ * and rejects any cycle, including an entry that reads its own key.
+ */
 export interface ComputedSpec {
   key: string;
   op: ComputedOp;
@@ -94,18 +108,12 @@ export interface ComputedSpec {
    *
    * Note that a dot is a legal character inside a key too, so `items.amount` is
    * resolved as a whole name first and only read as a path if no key matches it.
+   *
+   * Every arg must resolve, to a declared field key, to the key of another
+   * computed entry, or - when dotted - to a column of a declared repeating field.
    */
   args: string[];
-  /**
-   * Read by `percent`; the percentage rate.
-   *
-   * Entries in this list may read each other in any order - a forward reference
-   * is legal, so the graph is not required to be topologically sorted. It *is*
-   * required to be acyclic: entries are evaluated in array order, so a cycle
-   * would read a value that has not been produced, silently contribute zero, and
-   * print a wrong total. `validateManifest` in `lib/package/validate.ts` proves
-   * acyclicity and rejects a self-referencing entry.
-   */
+  /** Read by `percent`; the percentage rate. Resolved the same way as an arg. */
   rateKey?: string;
 }
 

@@ -224,7 +224,10 @@ describe("validatePackage", () => {
     const computed: PackageManifest["computed"] = [
       { key: "tax", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
     ];
-    // `subtotal` is not declared anywhere, so this is not clean either way.
+    // `subtotal` is declared nowhere, so the arg cannot resolve - asserted here so
+    // the rateKey half below has something to be clean *against*.
+    expect(errorAt(pkg({ fields, computed }), "computed[0].args[0]")).toBeDefined();
+    // The rateKey itself resolves, so no rateKey issue despite the arg problem.
     expect(errorAt(pkg({ fields, computed }), "computed[0].rateKey")).toBeUndefined();
 
     const chain: PackageManifest["computed"] = [
@@ -348,8 +351,7 @@ describe("validatePackage", () => {
       ],
     });
     const found = errorAt(p, "computed[0]");
-    expect(found?.message).toContain("a");
-    expect(found?.message).toContain("b");
+    expect(found?.message).toContain("a -> b -> a");
   });
 
   it("rejects a three-entry computed cycle, naming every entry", () => {
@@ -361,9 +363,7 @@ describe("validatePackage", () => {
       ],
     });
     const found = errorAt(p, "computed[0]");
-    expect(found?.message).toContain("a");
-    expect(found?.message).toContain("b");
-    expect(found?.message).toContain("c");
+    expect(found?.message).toContain("a -> b -> c -> a");
   });
 
   it("accepts a long acyclic graph with forward references", () => {
@@ -397,6 +397,129 @@ describe("validatePackage", () => {
       { key: "fee", op: "multiply", args: ["subtotal", "total"] },
     ];
     expect(errorAt(pkg({ fields, computed: looped }), "computed[1]")).toBeDefined();
+  });
+
+  it("reports one issue per disjoint cycle, anchored at each ring's earliest entry", () => {
+    const p = pkg({
+      computed: [
+        { key: "a", op: "add" as const, args: ["b"] },
+        { key: "b", op: "sum" as const, args: ["a"] },
+        { key: "c", op: "add" as const, args: ["d"] },
+        { key: "d", op: "sum" as const, args: ["c"] },
+      ],
+    });
+    const cycles = errors(p).filter((i) => i.message.includes("form a cycle"));
+    expect(cycles).toHaveLength(2);
+    expect(errorAt(p, "computed[0]")?.message).toContain("a -> b -> a");
+    expect(errorAt(p, "computed[2]")?.message).toContain("c -> d -> c");
+  });
+
+  it("rejects a field pattern that is not a string", () => {
+    const p = pkg({
+      fields: [
+        {
+          key: "x",
+          label: "X",
+          type: "text" as const,
+          source: "text" as const,
+          objectName: "O",
+          pattern: 5 as never,
+        },
+      ],
+    });
+    expect(errorAt(p, "fields[0].pattern")?.message).toContain("must be a string");
+  });
+
+  it("rejects a currencyScale above 6", () => {
+    const p = pkg({
+      document: { width: 794, height: 1123, unit: "px", dpi: 96, paper: "A4", currencyScale: 7 },
+    });
+    expect(errorAt(p, "document.currencyScale")).toBeDefined();
+  });
+
+  it("rejects a fractional currencyScale", () => {
+    const p = pkg({
+      document: { width: 794, height: 1123, unit: "px", dpi: 96, paper: "A4", currencyScale: 1.5 },
+    });
+    expect(errorAt(p, "document.currencyScale")).toBeDefined();
+  });
+
+  it("rejects a non-positive page height", () => {
+    const p = pkg({
+      document: { width: 794, height: 0, unit: "px", dpi: 96, paper: "A4", currencyScale: 2 },
+    });
+    expect(errorAt(p, "document.height")?.message).toContain("positive");
+  });
+
+  it("rejects a non-finite page height", () => {
+    const p = pkg({
+      document: {
+        width: 794,
+        height: Number.NaN,
+        unit: "px",
+        dpi: 96,
+        paper: "A4",
+        currencyScale: 2,
+      },
+    });
+    expect(errorAt(p, "document.height")).toBeDefined();
+  });
+
+  it("rejects an empty name", () => {
+    expect(errorAt(pkg({ name: "" }), "name")?.message).toContain("no name");
+  });
+
+  it("reports an asset entry that is not an object", () => {
+    expect(errorAt(pkg({ assets: ["nope"] as never }), "assets[0]")?.message).toContain(
+      "not an object",
+    );
+  });
+
+  it("reports a font entry that is not an object", () => {
+    expect(errorAt(pkg({ fonts: ["nope"] as never }), "fonts[0]")?.message).toContain(
+      "not an object",
+    );
+  });
+
+  it("reports a field entry that is not an object", () => {
+    expect(errorAt(pkg({ fields: ["nope"] as never }), "fields[0]")?.message).toContain(
+      "not an object",
+    );
+  });
+
+  it("reports a computed entry that is not an object", () => {
+    expect(errorAt(pkg({ computed: ["nope"] as never }), "computed[0]")?.message).toContain(
+      "not an object",
+    );
+  });
+
+  it("rejects a font file that is not in the archive", () => {
+    const p = pkg({
+      fonts: [{ family: "Inter", file: "fonts/inter.ttf", sha256: "0".repeat(64) }],
+    });
+    expect(errorAt(p, "fonts[0].file")?.message).toContain("not in the archive");
+  });
+
+  it("rejects a computed args list holding a non-string", () => {
+    const p = pkg({
+      computed: [{ key: "t", op: "sum" as const, args: ["subtotal", 5] as never }],
+    });
+    expect(errorAt(p, "computed[0].args")?.message).toContain("all be strings");
+  });
+
+  it("rejects checksums that are not an object", () => {
+    expect(errorAt(pkg({ checksums: "nope" as never }), "checksums")?.message).toContain(
+      "must be an object",
+    );
+  });
+
+  it("rejects a checksum given for a file that is not in the archive", () => {
+    const p = pkg({ checksums: { "assets/absent.png": "0".repeat(64) } });
+    expect(errorAt(p, "checksums.assets/absent.png")?.message).toContain("not in the archive");
+  });
+
+  it("names null as the type found in a mistyped section", () => {
+    expect(errorAt(pkg({ fields: null as never }), "fields")?.message).toContain("it is null");
   });
 
   it("never throws on a garbage manifest", () => {
