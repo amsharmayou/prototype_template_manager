@@ -12,9 +12,10 @@ const SCHEME = "pkg://";
  *
  * This inverts a lossy transform rather than repeating it: `buildPackage` sanitises
  * a declared subtype into a filename-safe token, so `image/svg+xml` is archived as
- * `.svg-xml`. Only types whose token is still the subtype survive the round trip,
- * which is why the map is short. An extension it does not recognise yields
- * undefined and the reference is reported, not guessed at.
+ * `.svg-xml`. Only types whose token is still the subtype are listed, which is why
+ * `.svg-xml` is absent - its token is not the subtype, and mapping it back would be
+ * the same guess this function exists to avoid. An extension the map does not know
+ * yields undefined and the reference is reported.
  */
 const FALLBACK_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -26,7 +27,6 @@ const FALLBACK_MIME: Record<string, string> = {
   ".avif": "image/avif",
   ".tif": "image/tiff",
   ".tiff": "image/tiff",
-  ".svg-xml": "image/svg+xml",
 };
 
 function extensionOf(path: string): string {
@@ -35,18 +35,35 @@ function extensionOf(path: string): string {
 }
 
 /**
+ * A mime that will become a well-formed `data:` image URI and nothing else: an
+ * `image/` prefix followed by a bare subtype token.
+ *
+ * Anchored rather than a prefix test, because "a trusted mime yields
+ * `data:image/<subtype>;base64,`" then holds by construction instead of by
+ * accident. `attr()` escapes quotes and the `data:image/` prefix forecloses a
+ * scheme escape, so a looser check is harmless *today* - but those are properties
+ * of the renderer, not of this function, and they are not why a caller should be
+ * able to trust the result.
+ */
+function isTrustedMime(mime: unknown): mime is string {
+  return typeof mime === "string" && /^image\/[a-z0-9.+-]+$/.test(mime);
+}
+
+/**
  * What the bytes at `path` are declared to be, or undefined if that cannot be
  * established.
  *
- * The manifest's `mime` wins whenever it is present and is an image type. A
- * manifest arrives through an unvalidated `JSON.parse` cast, so a `mime` that is
- * absent, not a string, or not an image type counts as no declaration at all
- * rather than as one to trust - the same allowlist `isSafeImageSrc` enforces at the
- * far end of the pipeline.
+ * The manifest's `mime` wins whenever it is present and trustworthy. A manifest
+ * arrives through an unvalidated `JSON.parse` cast, so `assets` itself may not be
+ * an array and a `mime` may be absent, not a string, or not a bare image subtype -
+ * each of which counts as no declaration at all rather than as one to trust.
  */
 function mimeFor(pkg: Package, path: string): string | undefined {
-  const declared = pkg?.manifest?.assets?.find((a) => a?.file === path)?.mime;
-  if (typeof declared === "string" && declared.startsWith("image/")) return declared;
+  const assets = pkg?.manifest?.assets;
+  const declared = Array.isArray(assets)
+    ? assets.find((a) => a?.file === path)?.mime
+    : undefined;
+  if (isTrustedMime(declared)) return declared;
   return FALLBACK_MIME[extensionOf(path)];
 }
 
@@ -74,16 +91,26 @@ function toDataUri(bytes: Uint8Array, mime: string, path: string): string {
  * never learn that packages exist, and its purity guarantee and byte-for-byte
  * goldens keep holding.
  *
- * Two things are reported rather than papered over, and both are left in place for
- * the same reason. `lib/render`'s `isSafeImageSrc` rejects the `pkg://` scheme, so
- * an unresolved object renders as an empty slot and records a refusal naming the
- * file - a diagnosable failure, where a substituted value is a wrong answer that
- * renders broken and says nothing:
+ * Two things are reported rather than papered over, and in both the `pkg://`
+ * reference is left in place, because `lib/render`'s `isSafeImageSrc` rejects that
+ * scheme. What the renderer then does differs by role, and the difference decides
+ * whether the customer can see that anything went wrong:
  *
- * - a reference naming a member the package does not carry, and
- * - a reference whose type cannot be established. A guessed `image/png` around
- *   bytes that are not a PNG still satisfies `isSafeImageSrc`, so it would reach
- *   the page as a silently broken image.
+ * - An unresolved `image-placeholder` still paints its dashed slot, so the part
+ *   remains visible on the page. Nothing is recorded for it, so it is the quiet
+ *   case.
+ * - An unresolved `bill-part` is *removed from the page entirely*.
+ *   `renderBillPart` returns `null` and `renderHtml` filters nulls out of the body.
+ *   A refusal is recorded, naming the object - though not the file, since it records
+ *   `typeof o.src`, so the path is recoverable only from `unresolved` above.
+ *
+ * So the diagnosable failure exists for the role that drops the object, and only if
+ * somebody reads it: a host that does not surface `refusals` will show a customer a
+ * bill with a missing part and no indication anything was wrong.
+ *
+ * Whether an unresolved bill part should instead paint a visible placeholder is a
+ * product decision with customer-visible consequences, and is deliberately not made
+ * here.
  */
 export function resolvePackage(pkg: Package): { template: BillTemplate; unresolved: string[] } {
   const unresolved: string[] = [];
