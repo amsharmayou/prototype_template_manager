@@ -1,4 +1,5 @@
 import { collectDocumentVariables } from "@/lib/template/placeholders";
+import type { ComputedSpec } from "@/lib/package/format";
 import {
   A4_HEIGHT,
   A4_WIDTH,
@@ -8,22 +9,30 @@ import {
 } from "@/lib/template/types";
 
 import { canonicalJson } from "./canonical";
+import { computeAll } from "./computed";
 import { Refusals, safeLength, type Refusal } from "./css";
 import { attr, escapeHtml } from "./escape";
 import { renderObject } from "./primitives";
+import { expandRepeats } from "./repeat";
 import { sha256Hex } from "./sha256";
 import { stylesheet } from "./style";
+import type { Values } from "./values";
 
 export type { Refusal } from "./css";
 
 export interface RenderOptions {
   title?: string;
+  /** Evaluated before the page is painted. */
+  computed?: readonly ComputedSpec[];
+  /** Decimal places money is held in. Defaults to 2. */
+  currencyScale?: number;
 }
 
 export interface RenderResult {
   html: string;
   refusals: Refusal[];
   variables: string[];
+  warnings: string[];
 }
 
 /**
@@ -138,14 +147,24 @@ export function renderHtml(
     objects = [];
   }
 
+  // Repeating bands are expanded before anything is sorted or painted, so the
+  // renderer itself stays unaware of them. `values` gains the computed results
+  // first, because a band's trailing summary row reads them.
+  const enriched: Values = {
+    ...values,
+    ...computeAll(options.computed ?? [], values, options.currencyScale ?? 2),
+  };
+
+  const { objects: expanded, warnings } = expandRepeats(objects, enriched, height);
+
   // The array index breaks zIndex ties, so objects that share a zIndex keep
   // their order from one run to the next.
-  const ordered = objects
+  const ordered = expanded
     .map((o, i) => ({ o, i }))
     .sort((a, b) => a.o.zIndex - b.o.zIndex || a.i - b.i);
 
   const body = ordered
-    .map(({ o, i }) => renderObject(o, i, values, refusals))
+    .map(({ o, i }) => renderObject(o, i, enriched, refusals))
     .filter((s): s is string => typeof s === "string")
     .join("\n");
 
@@ -182,5 +201,5 @@ export function renderHtml(
     texts.filter((t): t is string => typeof t === "string"),
   );
 
-  return { html, refusals: refusals.list(), variables };
+  return { html, refusals: refusals.list(), variables, warnings };
 }
