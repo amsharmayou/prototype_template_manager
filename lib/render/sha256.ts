@@ -75,7 +75,24 @@ function hex(n: number): string {
 }
 
 export function sha256Hex(input: string): string {
-  const message = utf8Bytes(input);
+  return sha256HexFromBytes(utf8Bytes(input));
+}
+
+/**
+ * Hash raw bytes. `sha256Hex` cannot be used for this: it runs its input through
+ * a UTF-8 encoder first, so any byte sequence that is not valid UTF-8 would be
+ * hashed as its replacement-character substitution rather than as itself. A
+ * package checksum covers PNG bytes, so it must hash what is actually stored.
+ */
+export function sha256HexBytes(bytes: Uint8Array): string {
+  return sha256HexFromBytes(Array.from(bytes));
+}
+
+/**
+ * FIPS 180-4 SHA-256 over an already-encoded byte sequence. Both public entry
+ * points share this, so they cannot drift apart in how they pad.
+ */
+export function sha256HexFromBytes(message: number[]): string {
   const bits = message.length * 8;
   const high = Math.floor(bits / 0x100000000);
 
