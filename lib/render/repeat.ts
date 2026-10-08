@@ -85,6 +85,23 @@ function bandOf(o: TableObject): { band: Band; why: string | null } | null {
   };
 }
 
+/**
+ * Whether `raw` is a JSON array at all, an empty one included.
+ *
+ * `itemsOf` answers an empty list both for "the host sent no rows" and for "the host
+ * sent something unreadable", and only this module still holds the raw text, so the
+ * distinction is made here instead of by widening `itemsOf`'s contract. Zero rows is
+ * an ordinary bill, not a defect, so only a value that is not an array at all -- a
+ * parse failure, or a JSON scalar or object -- earns a warning.
+ */
+function isJsonArray(raw: string): boolean {
+  try {
+    return Array.isArray(JSON.parse(raw));
+  } catch {
+    return false;
+  }
+}
+
 function expandTable(
   o: TableObject,
   values: Values,
@@ -104,7 +121,7 @@ function expandTable(
   const raw = values[band.key];
   const items = itemsOf(values, band.key);
 
-  if (typeof raw === "string" && raw.length > 0 && items.length === 0) {
+  if (typeof raw === "string" && raw.length > 0 && !isJsonArray(raw)) {
     warnings.push(
       `table "${o.name}" could not read any items from ${band.key}; the repeating rows were dropped`,
     );

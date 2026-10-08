@@ -101,16 +101,31 @@ describe("expandRepeats", () => {
   });
 
   it("collapses the band to nothing for an empty item list", () => {
-    const { objects } = expandRepeats([table()], v({ items: "[]" }), 1123);
+    const { objects, warnings } = expandRepeats([table()], v({ items: "[]" }), 1123);
     const t = objects[0] as TableObject;
     expect(t.rows).toBe(2);
     expect(texts(t)).toEqual(["Item", "Amount", "Total", "{{total}}"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("stays silent when the band key is absent", () => {
+    const { objects, warnings } = expandRepeats([table()], v({}), 1123);
+    expect((objects[0] as TableObject).rows).toBe(2);
+    expect(warnings).toEqual([]);
   });
 
   it("collapses the band and warns for unparseable items", () => {
     const { objects, warnings } = expandRepeats([table()], v({ items: "not json" }), 1123);
     expect((objects[0] as TableObject).rows).toBe(2);
     expect(warnings.join(" ")).toMatch(/items/);
+  });
+
+  it("warns for a JSON value that is not an array", () => {
+    for (const raw of ['"hello"', "42", "{}"]) {
+      const { objects, warnings } = expandRepeats([table()], v({ items: raw }), 1123);
+      expect((objects[0] as TableObject).rows).toBe(2);
+      expect(warnings.join(" ")).toMatch(/items/);
+    }
   });
 
   it("clamps to maxItems and says so", () => {
