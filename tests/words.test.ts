@@ -53,4 +53,35 @@ describe("spellMoney", () => {
   it("never produces an empty string for a negative amount", () => {
     expect(spellMoney(-100, 2).length).toBeGreaterThan(0);
   });
+
+  it("spells the sub-unit in the singular for exactly one", () => {
+    // Every other sub-unit assertion has a count of two or more, so swapping the
+    // two forms for each other left the suite green.
+    expect(spellMoney(101, 2)).toBe("One Rupee One Paisa Only");
+    expect(spellMoney(1101, 2)).toBe("Eleven Rupees One Paisa Only");
+  });
+
+  it("puts the sign in the words, where a bill prints it", () => {
+    expect(spellMoney(-100, 2)).toBe("Minus One Rupee Only");
+    expect(spellMoney(-40, 2)).toBe("Minus Forty Paise Only");
+  });
+
+  it("reads a negative figure that rounds to zero as plain zero", () => {
+    // "-0.40" is a rounding remainder, not a debt, and "Minus Zero Rupees Only"
+    // is not a line any bill can carry.
+    expect(spellMoney(-0.4, 2)).toBe("Zero Rupees Only");
+  });
+
+  it("names the groups above a crore", () => {
+    // An arab is 100 crore, a kharab is 100 arab.
+    expect(spellMoney(500000000000, 2)).toBe("Five Arab Rupees Only");
+    expect(spellMoney(10000000000000, 2)).toBe("One Kharab Rupees Only");
+    expect(spellMoney(250000000000, 2)).toBe("Two Arab Fifty Crore Rupees Only");
+  });
+
+  it("stops naming groups at a magnitude no group word covers", () => {
+    // Recursing through Crore repeated the name once per level, so 10^21 read
+    // as "One Lakh Crore Crore". Digits are unambiguous where a word is not.
+    expect(spellMoney(1e21, 2)).toBe("100000000 Kharab Rupees Only");
+  });
 });

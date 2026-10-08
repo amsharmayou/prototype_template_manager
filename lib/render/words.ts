@@ -58,21 +58,35 @@ function under1000(n: number): string {
   return [head, tail].filter(Boolean).join(" ");
 }
 
-/** Indian grouping: crore (10^7), lakh (10^5), thousand (10^3). */
+/**
+ * Indian grouping, largest first: kharab (10^11), arab (10^9), crore (10^7),
+ * lakh (10^5), thousand (10^3).
+ *
+ * The groups are walked once rather than recursing into Crore, which repeated
+ * the name once per level: 10^21 read as "One Lakh Crore Crore". Past 999 of the
+ * largest group there is no established Indian name, so the count is printed as
+ * digits -- unambiguous, where a repeated or invented word is not.
+ */
+const GROUPS: readonly (readonly [number, string])[] = [
+  [100000000000, "Kharab"],
+  [1000000000, "Arab"],
+  [10000000, "Crore"],
+  [100000, "Lakh"],
+  [1000, "Thousand"],
+];
+
 function groupWords(n: number): string {
   if (n <= 0) return "";
-  const crore = Math.floor(n / 10000000);
-  const lakh = Math.floor((n % 10000000) / 100000);
-  const thousand = Math.floor((n % 100000) / 1000);
-  const rest = n % 1000;
-  return [
-    crore ? `${groupWords(crore)} Crore` : "",
-    lakh ? `${under100(lakh)} Lakh` : "",
-    thousand ? `${under100(thousand)} Thousand` : "",
-    rest ? under1000(rest) : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  let rest = n;
+  const parts: string[] = [];
+  for (const [size, name] of GROUPS) {
+    const count = Math.floor(rest / size);
+    if (count <= 0) continue;
+    parts.push(`${count >= 1000 ? String(count) : under1000(count)} ${name}`);
+    rest %= size;
+  }
+  if (rest > 0) parts.push(under1000(rest));
+  return parts.join(" ");
 }
 
 /**
@@ -97,7 +111,9 @@ export function spellMoney(minorUnits: number, scale: number, currency?: string)
   }
 
   const pieces: string[] = [];
-  if (minorUnits < 0) pieces.push("Minus");
+  // A figure whose magnitude rounds away is not a negative one: "-0.40" is a
+  // rounding remainder rather than a debt, and no bill can carry "Minus Zero".
+  if (minorUnits < 0 && n > 0) pieces.push("Minus");
   if (majorUnits === 0 && minorPart === 0) {
     pieces.push(`Zero ${words.majorMany} Only`);
   } else {
