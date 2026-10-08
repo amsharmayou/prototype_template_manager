@@ -6,7 +6,7 @@
  * rendering engine can consume without Fabric being installed.
  */
 
-export const TEMPLATE_VERSION = 1 as const;
+export const TEMPLATE_VERSION = 2 as const;
 
 export type ObjectType =
   | "line"
@@ -126,6 +126,30 @@ export interface TableCell {
   color?: string;
 }
 
+/**
+ * A band of rows inside a table that is repeated once per item at render time.
+ *
+ * Rows `startRow`..`endRow` inclusive (0-based) are the template band: they are
+ * cloned, never drawn as they stand, and every `{{token}}` inside them resolves
+ * against the current item before the flat values. A band may span more than one
+ * row so a two-row-per-item layout is expressible.
+ *
+ * Optional on purpose: its absence is a v1 template, which is why v1 and v2
+ * describe the same bytes.
+ */
+export interface TableRepeat {
+  /** 0-based, inclusive: first row of the template band. */
+  startRow: number;
+  /** 0-based, inclusive: last row of the template band. */
+  endRow: number;
+  /** Values key holding the JSON array of items. */
+  key: string;
+  /** Repeat `headerRow` when the expanded table splits across pages. */
+  repeatHeader?: boolean;
+  /** Hard cap on generated rows; a larger input is refused, not silently truncated. */
+  maxItems?: number;
+}
+
 export interface TableObject extends TemplateObjectBase {
   type: "table";
   rows: number;
@@ -146,6 +170,7 @@ export interface TableObject extends TemplateObjectBase {
   cellTextColor: string;
   padding: number;
   fontFamily: string;
+  repeat?: TableRepeat;
 }
 
 export type ImagePlaceholderRole =

@@ -7,6 +7,7 @@
  */
 import { cellIndex } from "@/lib/template/geometry";
 import { analysePlaceholders } from "@/lib/template/placeholders";
+import { TEMPLATE_VERSION } from "@/lib/template/types";
 import type {
   BillPartObject,
   BillTemplate,
@@ -456,7 +457,7 @@ export function serialiseObjects(
     if (serialised) out.push(serialised);
   }
   return {
-    templateVersion: 1,
+    templateVersion: TEMPLATE_VERSION,
     document: { width: doc.width, height: doc.height },
     meta: { name, modifiedAt: new Date().toISOString() },
     objects: out,

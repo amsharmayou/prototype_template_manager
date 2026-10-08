@@ -490,7 +490,7 @@ describe("serialiseObjects", () => {
       "My bill",
     );
 
-    expect(template.templateVersion).toBe(1);
+    expect(template.templateVersion).toBe(2);
     expect(template.document).toEqual({ width: 794, height: 1123 });
     expect(template.meta.name).toBe("My bill");
     expect(template.objects.map((o) => o.id)).toEqual(["a", "b"]);

@@ -13,7 +13,7 @@ import { renderObject } from "@/lib/render/primitives";
 import { sha256Hex } from "@/lib/render/sha256";
 import { stylesheet } from "@/lib/render/style";
 import { resolveText } from "@/lib/render/values";
-import { emptyTemplate, type BillTemplate } from "@/lib/template/types";
+import { TEMPLATE_VERSION, emptyTemplate, type BillTemplate } from "@/lib/template/types";
 
 describe("sha256Hex", () => {
   it("matches the published vectors", () => {
@@ -866,7 +866,7 @@ describe("renderHtml", () => {
   it("records the template version and a stable hash", () => {
     const a = renderHtml(tpl()).html;
     const b = renderHtml(tpl()).html;
-    expect(a).toContain('data-template-version="1"');
+    expect(a).toContain('data-template-version="2"');
     const hash = /data-template-hash="([0-9a-f]{64})"/.exec(a);
     expect(hash).not.toBeNull();
     expect(b).toContain(hash![1]!);
@@ -880,9 +880,36 @@ describe("renderHtml", () => {
     expect(a).not.toBe(b);
   });
 
-  it("refuses an unsupported template version instead of guessing", () => {
+it("refuses an unsupported template version instead of guessing", () => {
     expect(() => renderHtml(tpl((t) => { (t as never as { templateVersion: number }).templateVersion = 99; })))
       .toThrow(/version/i);
+  });
+
+  it("still renders a v1 template unchanged after the version bump", () => {
+    // The whole point of v2 being additive: `repeat` is optional, so a v1
+    // template describes the same bytes and must keep rendering byte-for-byte.
+    // The reported version is the one the template CLAIMED, not the supported
+    // one -- restamping it would misreport what produced the page.
+    const v1 = {
+      templateVersion: 1,
+      document: { width: 794, height: 1123 },
+      meta: { name: "v1 bill", modifiedAt: "" },
+      objects: [],
+    } as unknown as BillTemplate;
+
+    const { html, refusals } = renderHtml(v1);
+    expect(html).toContain('data-template-version="1"');
+    expect(html).not.toContain('data-template-version="2"');
+    expect(refusals).toHaveLength(0);
+  });
+
+  it("refuses a template claiming a version above this build, not just 99", () => {
+    // The refusal is relative to the constant, so it must still bite at
+    // TEMPLATE_VERSION + 1 and not merely at a hardcoded sentinel.
+    expect(TEMPLATE_VERSION).toBe(2);
+    expect(() => renderHtml(tpl((t) => {
+      (t as never as { templateVersion: number }).templateVersion = TEMPLATE_VERSION + 1;
+    }))).toThrow(/exceeds/);
   });
 
   it("reports the document's variables", () => {
@@ -979,7 +1006,7 @@ describe("renderHtml", () => {
       }),
     );
     expect(html).not.toContain("onload");
-    expect(html).toContain('data-template-version="1"');
+    expect(html).toContain('data-template-version="2"');
     expect(refusals.map((f) => f.field)).toContain("templateVersion");
   });
 
@@ -990,7 +1017,7 @@ describe("renderHtml", () => {
       }),
     );
     expect(html).not.toContain("undefined");
-    expect(html).toContain('data-template-version="1"');
+    expect(html).toContain('data-template-version="2"');
     expect(refusals.map((f) => f.field)).toContain("templateVersion");
   });
 
@@ -1001,7 +1028,7 @@ describe("renderHtml", () => {
       }),
     );
     expect(html).not.toContain("<b>x");
-    expect(html).toContain('data-template-version="1"');
+    expect(html).toContain('data-template-version="2"');
   });
 
   it("gives a re-saved template the same fingerprint", () => {
@@ -1028,7 +1055,7 @@ describe("renderHtml", () => {
     delete (t as never as { meta?: unknown }).meta;
     const { html, refusals } = renderHtml(t);
     expect(html.startsWith("<!DOCTYPE html>")).toBe(true);
-    expect(html).toContain('data-template-version="1"');
+    expect(html).toContain('data-template-version="2"');
     expect(refusals.map((f) => f.field)).toContain("meta.name");
   });
 
