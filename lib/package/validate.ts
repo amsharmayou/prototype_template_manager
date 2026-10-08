@@ -266,12 +266,24 @@ export function validateManifest(
 
   const computed = section(manifest.computed, "computed", out);
   const computedKeys = new Set<ComputedSpec["key"]>();
+  const seenComputed = new Set<string>();
   computed.forEach((c, i) => {
     if (!isRecord(c)) {
       out.push(issue(`computed[${i}]`, "computed entry is not an object"));
       return;
     }
-    if (typeof c.key === "string" && c.key.length > 0) computedKeys.add(c.key);
+    // A duplicate is reported on the second occurrence, as for field keys. It
+    // is an error rather than untidiness because resolution reads this set: two
+    // entries under one key would make what an arg resolves *to* depend on
+    // which of them the reader happened to find.
+    if (typeof c.key === "string" && c.key.length > 0) {
+      if (seenComputed.has(c.key)) {
+        out.push(issue(`computed[${i}].key`, `duplicate computed key ${c.key}`));
+      } else {
+        seenComputed.add(c.key);
+        computedKeys.add(c.key);
+      }
+    }
     if (typeof c.op !== "string" || !COMPUTED_OPS.has(c.op)) {
       out.push(issue(`computed[${i}].op`, `unknown computed op ${String(c.op)}`));
     }
@@ -286,13 +298,37 @@ export function validateManifest(
   // Second pass: with every declared name known, each reference can be resolved.
   computed.forEach((c, i) => {
     if (!isRecord(c)) return;
+    const ownKey = typeof c.key === "string" && c.key.length > 0 ? c.key : undefined;
     const args = Array.isArray(c.args) ? c.args : [];
     args.forEach((a, j) => {
       if (typeof a !== "string" || a.length === 0) return;
+      // Self-reference is the one cycle a name set can express, because
+      // resolution deliberately admits every computed key including this
+      // entry's own. `subtotal = subtotal` resolves perfectly and means nothing:
+      // no evaluator can produce the value it would read. So it is an error,
+      // reported at the arg that carries it.
+      if (a === ownKey) {
+        out.push(
+          issue(
+            `computed[${i}].args[${j}]`,
+            `arg ${a}: a computed entry cannot read its own key; it names a value nothing produces`,
+          ),
+        );
+        return;
+      }
       const why = unresolved(a, fieldKeys, computedKeys, repeats);
       if (why) out.push(issue(`computed[${i}].args[${j}]`, `arg ${why}`));
     });
     if (typeof c.rateKey !== "string" || c.rateKey.length === 0) return;
+    if (c.rateKey === ownKey) {
+      out.push(
+        issue(
+          `computed[${i}].rateKey`,
+          `rateKey ${c.rateKey}: a computed entry cannot use its own key as its own rate`,
+        ),
+      );
+      return;
+    }
     const why = unresolved(c.rateKey, fieldKeys, computedKeys, repeats);
     if (why) out.push(issue(`computed[${i}].rateKey`, `rateKey ${why}`));
   });

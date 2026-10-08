@@ -295,6 +295,33 @@ describe("validatePackage", () => {
     expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
   });
 
+  it("rejects duplicate computed keys", () => {
+    const p = pkg({
+      computed: [
+        { key: "subtotal", op: "sum" as const, args: [] },
+        { key: "subtotal", op: "sum" as const, args: [] },
+      ],
+    });
+    expect(errorAt(p, "computed[1].key")).toBeDefined();
+  });
+
+  it("accepts a computed list with distinct keys", () => {
+    const distinct: PackageManifest["computed"] = [
+      { key: "subtotal", op: "sum", args: [] },
+      { key: "total", op: "add", args: ["subtotal"] },
+    ];
+    expect(validatePackage(pkg({ computed: distinct })).issues).toEqual([]);
+    // Clean only because the keys differ; collapsing the second is the defect.
+    expect(validatePackage(pkg({ computed: [distinct[0], distinct[0]] })).issues).not.toEqual([]);
+  });
+
+  it("rejects a computed entry whose args name its own key", () => {
+    const p = pkg({
+      computed: [{ key: "subtotal", op: "sum" as const, args: ["subtotal"] }],
+    });
+    expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
+  });
+
   it("never throws on a garbage manifest", () => {
     for (const bad of [null, undefined, 42, "x", [], { assets: "no", fields: 3 }]) {
       const p = { manifest: bad as never, files: new Map() };
