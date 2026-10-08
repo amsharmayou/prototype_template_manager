@@ -13,24 +13,38 @@ export interface BuildOptions {
 }
 
 /**
- * An inline image, capturing its mime subtype.
+ * An inline image, capturing its declared type.
  *
  * Not global: a shared `/g` regex carries `lastIndex` between `exec` calls and
  * silently stops matching.
  */
-const DATA_IMAGE = /^data:(image\/([a-z0-9.+-]+));base64,/i;
+const DATA_IMAGE = /^data:(image\/[a-z0-9.+-]+);base64,/i;
 
 /**
- * Archive extension taken from the URI's mime subtype.
+ * The image type an inline data URI declares, lowercased, e.g. `image/webp`.
  *
- * `ManifestAsset` records no mime type, so the member's name is the only durable
- * record of what the bytes are. Hardcoding `.png` filed an inline JPEG under a name
- * that claims otherwise, and nothing downstream could recover the truth.
+ * Undefined for anything that is not a base64 image data URI - the same condition
+ * `DATA_IMAGE.test` reports - so this and `imageExtension` read one definition of
+ * what a data URI looks like rather than each holding their own.
+ *
+ * This is the type the URI *declared*, not one recovered from the bytes. A file
+ * that was already wrong before it was inlined stays wrong here; sniffing the
+ * actual content is a separate feature, and this is not content validation.
+ */
+function declaredMime(src: string): string | undefined {
+  return DATA_IMAGE.exec(src)?.[1]?.toLowerCase();
+}
+
+/**
+ * Archive extension taken from the URI's declared mime subtype.
+ *
+ * The sanitising below is lossy, which is why `ManifestAsset` also records the mime
+ * itself: `image/svg+xml` becomes `svg-xml`, and a reader working from the name
+ * alone cannot put the original back.
  */
 function imageExtension(src: string): string {
-  const subtype = DATA_IMAGE.exec(src)?.[2] ?? "";
+  const subtype = declaredMime(src)?.split("/")[1] ?? "";
   const cleaned = subtype
-    .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 16);
@@ -97,9 +111,15 @@ function bandColumns(t: TableObject, startRow: number, endRow: number): string[]
 /**
  * Turn a template into the distributable package form.
  *
- * Images move out of the JSON and into the archive. Base64 inflates binary by a
- * third, and holding the bytes in one place is what lets a host read one asset
- * without parsing the whole document.
+ * Images move out of the JSON and into the archive.
+ *
+ * The archive-level size win is small - measured at 2-3%, not the third that
+ * base64's overhead suggests, because deflate's Huffman coding already recovers
+ * most of that inflation: base64 carries 6 bits per character, so it compresses
+ * almost back down before extraction is even considered. What extraction
+ * actually buys is that template.json stops carrying megabytes of text, so
+ * reading the template is cheap and each image is a separately addressable member
+ * a host can fetch without parsing the whole document.
  */
 export function buildPackage(template: BillTemplate, options: BuildOptions = {}): Package {
   const files = new Map<string, Uint8Array>();
@@ -134,6 +154,9 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
       id: o.id,
       role,
       file: name,
+      // Sound: `DATA_IMAGE.test(src)` is the guard two lines above, so the URI
+      // declares a type.
+      mime: declaredMime(src)!,
       width: Math.round(o.width),
       height: Math.round(o.height),
     });

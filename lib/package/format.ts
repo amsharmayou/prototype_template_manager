@@ -34,6 +34,16 @@ export interface ManifestAsset {
   role: "bill-part" | "image-placeholder";
   /** Archive-relative path, e.g. `assets/obj_7.png`. */
   file: string;
+  /**
+   * The image type the bytes were declared as, e.g. `image/webp`.
+   *
+   * Optional, because a package written before this field existed does not carry
+   * one. It records what a member's *name* cannot: `buildPackage` sanitises a
+   * declared subtype into a filename-safe token, so `image/svg+xml` is archived
+   * as `.svg-xml` and that substitution is lossy. A reader that re-derived the
+   * type from the extension would relabel the bytes as something they are not.
+   */
+  mime?: string;
   width: number;
   height: number;
 }

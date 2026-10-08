@@ -258,14 +258,16 @@ describe("package round-trip", () => {
   });
 
   it("names an archived asset after the mime type of its data URI", () => {
-    // `ManifestAsset` carries no mime field, so the only record of what the bytes
-    // are is the archive name. A JPEG stored as `.png` loses that for good.
+    // The archive name is a sanitised token, not a record of the type: `svg+xml`
+    // would be filed as `svg-xml`, and nothing could put it back. `ManifestAsset`
+    // now carries the declared mime alongside, and that is the durable record.
     const t = base();
     (t.objects[0] as { src?: string }).src =
       "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJ";
     const pkg = buildPackage(t);
     expect([...pkg.files.keys()]).toContain("assets/obj_7.jpeg");
     expect(pkg.manifest.assets[0]?.file).toBe("assets/obj_7.jpeg");
+    expect(pkg.manifest.assets[0]?.mime).toBe("image/jpeg");
   });
 
   it("gives two parts with identical images one archive entry", () => {
