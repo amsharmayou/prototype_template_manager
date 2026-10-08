@@ -91,9 +91,21 @@ export interface ComputedSpec {
   /**
    * A dotted arg such as `items.amount` means column `amount` of repeat `items`.
    * An undotted arg is a flat values key.
+   *
+   * Note that a dot is a legal character inside a key too, so `items.amount` is
+   * resolved as a whole name first and only read as a path if no key matches it.
    */
   args: string[];
-  /** Read by `percent`; the percentage rate. */
+  /**
+   * Read by `percent`; the percentage rate.
+   *
+   * Entries in this list may read each other in any order - a forward reference
+   * is legal, so the graph is not required to be topologically sorted. It *is*
+   * required to be acyclic: entries are evaluated in array order, so a cycle
+   * would read a value that has not been produced, silently contribute zero, and
+   * print a wrong total. `validateManifest` in `lib/package/validate.ts` proves
+   * acyclicity and rejects a self-referencing entry.
+   */
   rateKey?: string;
 }
 

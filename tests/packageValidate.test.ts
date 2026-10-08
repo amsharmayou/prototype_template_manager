@@ -320,6 +320,83 @@ describe("validatePackage", () => {
       computed: [{ key: "subtotal", op: "sum" as const, args: ["subtotal"] }],
     });
     expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
+    // Self-reference is the length-1 cycle; the graph walk must not report it
+    // a second time alongside the arg-level error.
+    expect(errors(p)).toHaveLength(1);
+  });
+
+  it("rejects a computed entry with an empty key", () => {
+    const p = pkg({ computed: [{ key: "", op: "sum" as const, args: [] }] });
+    expect(errorAt(p, "computed[0].key")).toBeDefined();
+  });
+
+  it("rejects a computed entry with no key at all", () => {
+    const p = pkg({ computed: [{ op: "sum" as const, args: [] } as never] });
+    expect(errorAt(p, "computed[0].key")).toBeDefined();
+  });
+
+  it("rejects a computed entry whose key is only whitespace", () => {
+    const p = pkg({ computed: [{ key: "   ", op: "sum" as const, args: [] }] });
+    expect(errorAt(p, "computed[0].key")).toBeDefined();
+  });
+
+  it("rejects a two-entry computed cycle, naming both entries", () => {
+    const p = pkg({
+      computed: [
+        { key: "a", op: "add" as const, args: ["b"] },
+        { key: "b", op: "sum" as const, args: ["a"] },
+      ],
+    });
+    const found = errorAt(p, "computed[0]");
+    expect(found?.message).toContain("a");
+    expect(found?.message).toContain("b");
+  });
+
+  it("rejects a three-entry computed cycle, naming every entry", () => {
+    const p = pkg({
+      computed: [
+        { key: "a", op: "add" as const, args: ["b"] },
+        { key: "b", op: "add" as const, args: ["c"] },
+        { key: "c", op: "sum" as const, args: ["a"] },
+      ],
+    });
+    const found = errorAt(p, "computed[0]");
+    expect(found?.message).toContain("a");
+    expect(found?.message).toContain("b");
+    expect(found?.message).toContain("c");
+  });
+
+  it("accepts a long acyclic graph with forward references", () => {
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount"],
+      },
+      { key: "tax_rate", label: "Tax rate", type: "number", source: "text", objectName: "R" },
+    ];
+    // total is declared first but reads three entries declared after it, and
+    // tax's rateKey points at a computed key declared before it. Neither is a
+    // cycle, so nothing here may be reported.
+    const acyclic: PackageManifest["computed"] = [
+      { key: "tax_rate_pct", op: "multiply", args: ["tax_rate"] },
+      { key: "total", op: "add", args: ["subtotal", "tax", "fee"] },
+      { key: "subtotal", op: "sum", args: ["items.amount"] },
+      { key: "tax", op: "percent", args: ["subtotal"], rateKey: "tax_rate_pct" },
+      { key: "fee", op: "multiply", args: ["subtotal", "tax_rate"] },
+    ];
+    expect(validatePackage(pkg({ fields, computed: acyclic })).issues).toEqual([]);
+
+    // Same graph with one link reversed into a loop, to prove the graph above
+    // was only clean because it is acyclic.
+    const looped: PackageManifest["computed"] = [
+      ...acyclic.slice(0, 4),
+      { key: "fee", op: "multiply", args: ["subtotal", "total"] },
+    ];
+    expect(errorAt(pkg({ fields, computed: looped }), "computed[1]")).toBeDefined();
   });
 
   it("never throws on a garbage manifest", () => {

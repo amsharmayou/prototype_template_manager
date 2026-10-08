@@ -135,6 +135,112 @@ function unresolved(
   return "it is neither a declared field key nor the key of another computed entry";
 }
 
+/** A computed entry as a graph node. `deps` are node references, not names. */
+type ComputedNode = {
+  key: string;
+  index: number;
+  spec: Record<string, unknown>;
+  deps: ComputedNode[];
+  /** How far the depth-first walk has got through `deps`. */
+  at: number;
+};
+
+const UNSEEN = 0;
+const ON_STACK = 1;
+const DONE = 2;
+
+/**
+ * Report every cycle in the computed reference graph.
+ *
+ * A cycle is worse than uncomputable in principle. `computeAll` evaluates specs
+ * in array order, so the first entry of a cycle reads a value that has not been
+ * computed yet; the lookup falls through to the supplied values map, finds
+ * nothing, and contributes zero. The bill then prints a total that is quietly
+ * wrong, with nothing anywhere reporting why. This is the only place the defect
+ * can be caught before the bill leaves the building.
+ *
+ * **One issue per cycle**, anchored at the earliest-declared member, rather than
+ * one for the whole graph. A manifest can hold several independent cycles, and a
+ * single graph-level issue would make the author fix one, reload, and discover
+ * the next - exactly the one-problem-per-reload failure this validator exists to
+ * remove. The message names every entry in the cycle, so splitting costs the
+ * author nothing.
+ *
+ * Self-reference is deliberately excluded from the edges: it is the length-1
+ * cycle, already reported at its own arg, and admitting it here would report the
+ * same defect twice.
+ *
+ * An arg that names no computed entry is a leaf. That covers both a name matching
+ * nothing and a dotted arg, which resolves into a repeat's columns - data, not a
+ * computed entry, so a chain may legitimately run through one.
+ */
+function reportComputedCycles(
+  computed: unknown[],
+  computedKeys: ReadonlySet<string>,
+  out: Issue[],
+): void {
+  const nodes = new Map<string, ComputedNode>();
+  computed.forEach((c, i) => {
+    if (!isRecord(c)) return;
+    const key = c.key;
+    // Only entries that actually entered the resolvable set are nodes, so the
+    // graph and resolution cannot disagree about who exists.
+    if (typeof key !== "string" || !computedKeys.has(key) || nodes.has(key)) return;
+    nodes.set(key, { key, index: i, spec: c, deps: [], at: 0 });
+  });
+
+  for (const node of nodes.values()) {
+    const args = Array.isArray(node.spec.args) ? node.spec.args : [];
+    for (const name of [...args, node.spec.rateKey]) {
+      if (typeof name !== "string" || name === node.key) continue;
+      const target = nodes.get(name);
+      if (target && !node.deps.includes(target)) node.deps.push(target);
+    }
+  }
+
+  const state = new Map<string, number>();
+  const stack: ComputedNode[] = [];
+
+  for (const root of nodes.values()) {
+    if ((state.get(root.key) ?? UNSEEN) !== UNSEEN) continue;
+    state.set(root.key, ON_STACK);
+    stack.push(root);
+    while (stack.length > 0) {
+      const node = stack[stack.length - 1];
+      if (node.at >= node.deps.length) {
+        state.set(node.key, DONE);
+        stack.pop();
+        continue;
+      }
+      const next = node.deps[node.at];
+      node.at += 1;
+      const seen = state.get(next.key) ?? UNSEEN;
+      if (seen === DONE) continue;
+      if (seen === ON_STACK) {
+        const from = stack.indexOf(next);
+        const cycle = stack.slice(from);
+        const anchor = cycle.reduce((earliest, n) =>
+          n.index < earliest.index ? n : earliest,
+        );
+        const chain = [...cycle.map((n) => n.key), cycle[0].key].join(" -> ");
+        out.push(
+          issue(
+            `computed[${anchor.index}]`,
+            `these computed entries form a cycle, so no order can evaluate them: ${chain}`,
+          ),
+        );
+        // Retire the cycle so the same one is not reported again from another
+        // entry into it.
+        for (const n of cycle) state.set(n.key, DONE);
+        stack.length = from;
+        continue;
+      }
+      state.set(next.key, ON_STACK);
+      stack.push(next);
+    }
+  }
+}
+
 /**
  * Validate a manifest against the archive it claims to describe.
  *
@@ -272,17 +378,18 @@ export function validateManifest(
       out.push(issue(`computed[${i}]`, "computed entry is not an object"));
       return;
     }
-    // A duplicate is reported on the second occurrence, as for field keys. It
-    // is an error rather than untidiness because resolution reads this set: two
-    // entries under one key would make what an arg resolves *to* depend on
-    // which of them the reader happened to find.
-    if (typeof c.key === "string" && c.key.length > 0) {
-      if (seenComputed.has(c.key)) {
-        out.push(issue(`computed[${i}].key`, `duplicate computed key ${c.key}`));
-      } else {
-        seenComputed.add(c.key);
-        computedKeys.add(c.key);
-      }
+    // Both branches are errors because this name set is load-bearing: resolution
+    // reads it, so a duplicate makes what an arg resolves *to* depend on which
+    // of the two entries a reader happened to find, and an entry with no usable
+    // key is an entry nothing can be resolved against. Duplicates are reported
+    // on the second occurrence, as field keys are.
+    if (typeof c.key !== "string" || c.key.trim().length === 0) {
+      out.push(issue(`computed[${i}].key`, "a computed entry must declare a key"));
+    } else if (seenComputed.has(c.key)) {
+      out.push(issue(`computed[${i}].key`, `duplicate computed key ${c.key}`));
+    } else {
+      seenComputed.add(c.key);
+      computedKeys.add(c.key);
     }
     if (typeof c.op !== "string" || !COMPUTED_OPS.has(c.op)) {
       out.push(issue(`computed[${i}].op`, `unknown computed op ${String(c.op)}`));
@@ -332,6 +439,8 @@ export function validateManifest(
     const why = unresolved(c.rateKey, fieldKeys, computedKeys, repeats);
     if (why) out.push(issue(`computed[${i}].rateKey`, `rateKey ${why}`));
   });
+
+  reportComputedCycles(computed, computedKeys, out);
 
   const checksums = manifest.checksums;
   if (checksums !== undefined) {
