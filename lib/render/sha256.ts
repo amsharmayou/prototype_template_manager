@@ -90,9 +90,11 @@ export function sha256HexBytes(bytes: Uint8Array): string {
 
 /**
  * FIPS 180-4 SHA-256 over an already-encoded byte sequence. Both public entry
- * points share this, so they cannot drift apart in how they pad.
+ * points share this, so they cannot drift apart in how they pad. The input is
+ * left untouched: the padding below is written to a copy.
  */
-export function sha256HexFromBytes(message: number[]): string {
+function sha256HexFromBytes(bytes: number[]): string {
+  const message = bytes.slice();
   const bits = message.length * 8;
   const high = Math.floor(bits / 0x100000000);
 
