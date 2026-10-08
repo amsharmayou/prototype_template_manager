@@ -86,19 +86,22 @@ function bandOf(o: TableObject): { band: Band; why: string | null } | null {
 }
 
 /**
- * Whether `raw` is a JSON array at all, an empty one included.
+ * How many entries `raw` holds when it is a JSON array, or null when it is not one at
+ * all -- a parse failure, or a JSON scalar or object.
  *
  * `itemsOf` answers an empty list both for "the host sent no rows" and for "the host
  * sent something unreadable", and only this module still holds the raw text, so the
- * distinction is made here instead of by widening `itemsOf`'s contract. Zero rows is
- * an ordinary bill, not a defect, so only a value that is not an array at all -- a
- * parse failure, or a JSON scalar or object -- earns a warning.
+ * distinction is made here instead of by widening `itemsOf`'s contract. The count is
+ * what separates the three states that matter: a genuinely empty bill, which is
+ * ordinary and silent; a value that is not a list at all; and a list that carried
+ * entries the renderer cannot use, which is silent data loss if it goes unreported.
  */
-function isJsonArray(raw: string): boolean {
+function jsonArrayLength(raw: string): number | null {
   try {
-    return Array.isArray(JSON.parse(raw));
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.length : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -121,10 +124,20 @@ function expandTable(
   const raw = values[band.key];
   const items = itemsOf(values, band.key);
 
-  if (typeof raw === "string" && raw.length > 0 && !isJsonArray(raw)) {
-    warnings.push(
-      `table "${o.name}" could not read any items from ${band.key}; the repeating rows were dropped`,
-    );
+  // Three states, three outcomes: a list of no entries is an ordinary bill and says
+  // nothing, a value that is not a list could not be read, and a list whose entries
+  // are all unusable would otherwise drop rows without a word.
+  if (typeof raw === "string" && raw.length > 0) {
+    const entries = jsonArrayLength(raw);
+    if (entries === null) {
+      warnings.push(
+        `table "${o.name}" could not read any items from ${band.key}; the repeating rows were dropped`,
+      );
+    } else if (entries > 0 && items.length === 0) {
+      warnings.push(
+        `table "${o.name}" read ${entries} entries from ${band.key} but none were usable rows; the repeating rows were dropped`,
+      );
+    }
   }
 
   let used = items;

@@ -128,6 +128,15 @@ describe("expandRepeats", () => {
     }
   });
 
+  it("warns for an array whose entries are not usable rows", () => {
+    const { objects, warnings } = expandRepeats([table()], v({ items: "[1,2,3]" }), 1123);
+    expect((objects[0] as TableObject).rows).toBe(2);
+    const said = warnings.join(" ");
+    expect(said).toMatch(/3/);
+    expect(said).toMatch(/usable/i);
+    expect(said).not.toMatch(/could not read any items/);
+  });
+
   it("clamps to maxItems and says so", () => {
     const many = JSON.stringify(
       Array.from({ length: 10 }, (_, i) => ({ description: `d${i}`, amount: "1.00" })),
