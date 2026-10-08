@@ -137,4 +137,22 @@ describe("migrateTemplate", () => {
     });
     expect("placeholders" in template.meta).toBe(false);
   });
+
+  it("keeps an unknown extra meta key instead of whitelisting meta away", () => {
+    // Guards the bug class, not just today's bug: `meta` is rebuilt by
+    // spreading, so a field added to `TemplateMeta` tomorrow survives without
+    // needing a matching edit here. Whitelisting name/date/placeholders would
+    // silently drop it. `name` is absent here, so it must still be normalised.
+    const { template } = migrateTemplate({
+      ...v1,
+      meta: {
+        modifiedAt: "2026-01-01T00:00:00.000Z",
+        futureField: { deep: true },
+      },
+    });
+    expect((template.meta as unknown as Record<string, unknown>).futureField).toEqual({
+      deep: true,
+    });
+    expect(template.meta.name).toBe("Untitled bill");
+  });
 });

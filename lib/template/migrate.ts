@@ -62,20 +62,29 @@ export function migrateTemplate(raw: unknown): { template: BillTemplate; notes: 
   // The per-key placeholder contracts are carried through, not rebuilt from
   // name and date alone: `extractTemplateFields` and `fillTemplate` both read
   // `meta.placeholders`, so dropping it here would silently degrade every typed
-  // slot back to a bare token. The key is left off entirely when it is not an
-  // array, because absent and present-but-empty are distinct states here.
-  const placeholders = Array.isArray(meta.placeholders)
-    ? (meta.placeholders as PlaceholderSpec[])
+  // slot back to a bare token. It is split out because the spread below would
+  // otherwise carry whatever raw value was there, valid or not; the key is left
+  // off entirely when it is not an array, because absent and present-but-empty
+  // are distinct states here.
+  const { placeholders: rawPlaceholders, ...metaRest } = meta;
+  const placeholders = Array.isArray(rawPlaceholders)
+    ? (rawPlaceholders as PlaceholderSpec[])
     : undefined;
 
   return {
     template: {
       templateVersion: TEMPLATE_VERSION,
       document: { width, height },
-      meta:
-        placeholders === undefined
-          ? { name, modifiedAt }
-          : { name, modifiedAt, placeholders },
+      // Spread first so an unknown or later-added key survives: only `name` and
+      // `modifiedAt`, the two fields this function exists to repair, are
+      // overridden. Whitelisting them instead would drop every field added to
+      // `TemplateMeta` after this was written, silently.
+      meta: {
+        ...metaRest,
+        name,
+        modifiedAt,
+        ...(placeholders === undefined ? {} : { placeholders }),
+      },
       objects,
     },
     notes,
