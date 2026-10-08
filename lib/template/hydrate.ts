@@ -219,6 +219,7 @@ function hydrateTable(o: TableObject, zIndex: number): BillTable {
     cellTextColor: o.cellTextColor,
     padding: o.padding,
     fontFamily: o.fontFamily,
+    repeat: o.repeat,
   });
   table.set({
     left: o.x,

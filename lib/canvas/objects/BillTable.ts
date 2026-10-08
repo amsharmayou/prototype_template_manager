@@ -18,7 +18,7 @@ import {
 } from "@/lib/template/geometry";
 import { gridSegments } from "@/lib/canvas/tableGrid";
 import { DEFAULT_STROKE_WIDTH } from "@/lib/canvas/strokeDefaults";
-import type { TableCell, TextAlign } from "@/lib/template/types";
+import type { TableCell, TableRepeat, TextAlign } from "@/lib/template/types";
 
 export interface BillTableSpec {
   colWidths: number[];
@@ -33,6 +33,7 @@ export interface BillTableSpec {
   cellTextColor: string;
   padding: number;
   fontFamily: string;
+  repeat?: TableRepeat;
 }
 
 export interface TableResizeGesture {
@@ -108,6 +109,7 @@ export class BillTable extends FabricObject {
   declare cellTextColor: string;
   declare padding: number;
   declare fontFamily: string;
+  declare repeat?: TableRepeat;
 
   /** Cell currently being edited, as a flat index. -1 when none. */
   editingCell = -1;
@@ -135,6 +137,7 @@ export class BillTable extends FabricObject {
 
     this.colWidths = colWidths;
     this.rowHeights = rowHeights;
+    this.repeat = merged.repeat;
     this.cells = makeCells(
       rowHeights.length,
       colWidths.length,

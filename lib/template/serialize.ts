@@ -7,7 +7,10 @@
  */
 import { cellIndex } from "@/lib/template/geometry";
 import { analysePlaceholders } from "@/lib/template/placeholders";
-import { TEMPLATE_VERSION } from "@/lib/template/types";
+import {
+  DEFAULT_REPEAT_MAX_ITEMS,
+  TEMPLATE_VERSION,
+} from "@/lib/template/types";
 import type {
   BillPartObject,
   BillTemplate,
@@ -21,6 +24,7 @@ import type {
   SourceRect,
   TableCell,
   TableObject,
+  TableRepeat,
   TemplateObject,
   TemplateObjectBase,
   TextObject,
@@ -165,6 +169,34 @@ function readPoints(o: SerialisableObject): Array<[number, number]> {
     .filter((p): p is [number, number] => p !== null);
 }
 
+/**
+ * A band that cannot identify its items would produce a table with no repeating
+ * rows and no explanation, so it is dropped rather than written. The same shape
+ * is checked again on hydration and again in the renderer, because a package can
+ * be assembled from files this editor never saw.
+ */
+function serialiseRepeat(raw: unknown): TableRepeat | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const r = raw as Record<string, unknown>;
+  const key = r.key;
+  if (typeof key !== "string" || key.trim().length === 0) return undefined;
+  const startRow = r.startRow;
+  const endRow = r.endRow;
+  if (typeof startRow !== "number" || !Number.isInteger(startRow) || startRow < 0) return undefined;
+  if (typeof endRow !== "number" || !Number.isInteger(endRow) || endRow < startRow) return undefined;
+  const maxItems =
+    typeof r.maxItems === "number" && Number.isInteger(r.maxItems) && r.maxItems > 0
+      ? r.maxItems
+      : DEFAULT_REPEAT_MAX_ITEMS;
+  return {
+    startRow,
+    endRow,
+    key: key.trim(),
+    ...(r.repeatHeader === true ? { repeatHeader: true } : {}),
+    maxItems,
+  };
+}
+
 function serialiseTable(
   o: SerialisableObject,
   zIndex: number,
@@ -177,6 +209,7 @@ function serialiseTable(
     ? (o.rowHeights as number[]).map((n) => num(n, 24))
     : [base.height / 2, base.height / 2];
   const rawCells = Array.isArray(o.cells) ? (o.cells as TableCell[]) : [];
+  const repeat = serialiseRepeat((o as unknown as { repeat?: unknown }).repeat);
   const count = colWidths.length * rowHeights.length;
   const cells: TableCell[] = [];
   for (let i = 0; i < count; i++) {
@@ -206,6 +239,7 @@ function serialiseTable(
     cellTextColor: str(o.cellTextColor, "#000000"),
     padding: num(o.padding, 4),
     fontFamily: str(o.fontFamily, "Arial"),
+    ...(repeat ? { repeat } : {}),
   };
 }
 
