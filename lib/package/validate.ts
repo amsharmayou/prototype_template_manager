@@ -275,19 +275,28 @@ export function validateManifest(
   // `checksums` below cannot cover the manifest: a file cannot contain its own
   // hash, so the digest is written beside it and both are handed in together.
   //
-  // Two separate things can drift from that digest, and checking only the first
-  // blesses the second. The archived bytes can be altered, which is the case a
-  // checksum catches. Or the parsed manifest can be edited in memory after the
-  // parse - a host that rewrites `name` or drops an asset from a package it
-  // already loaded - in which case the bytes and the sibling digest still agree
-  // with each other and only disagree with the object actually being validated.
+  // Two different things can drift from that digest, and **neither check sees the
+  // other's case**, so both are needed:
   //
-  // Re-serialising is what ties the object to the digest, and it is exact:
-  // `writePackage` writes the manifest with `JSON.stringify(..., null, 2)` and
-  // `JSON.parse` preserves key order, so an untouched manifest reproduces its
-  // archived bytes bit for bit. Both messages are reported as the same `manifest`
-  // path because to a host they are one fact: this manifest is not the one that
-  // was signed over.
+  // - The archived bytes can be altered, by anything editing manifest.json inside
+  //   the archive. Only a hash of those bytes can see it, and only when the
+  //   sibling digest is left alone.
+  // - The parsed manifest can be edited in memory after the parse - a host that
+  //   rewrites `name` or drops an asset from a package it has already loaded -
+  //   while the archived bytes and the digest still agree with each other.
+  //
+  // Hashing the bytes alone misses the second, which is why the manifest under
+  // validation is also re-serialised. Re-serialising is exact rather than
+  // approximate: `writePackage` writes the manifest with
+  // `JSON.stringify(..., null, 2)` and `JSON.parse` preserves key order, so an
+  // untouched manifest reproduces its archived bytes bit for bit. That exactness
+  // is also the check's one coupling to the writer - a manifest formatted
+  // differently by some other writer would hash to something else and be reported
+  // as edited. Only this writer produces packages today; if a foreign writer is
+  // ever admitted, that is the line to revisit.
+  //
+  // Both messages carry the same `manifest` path because to a host they are one
+  // fact: this manifest is not the one that was signed over.
   if (manifestSha256 !== undefined) {
     if (manifestBytes && sha256HexBytes(manifestBytes) !== manifestSha256) {
       out.push(issue("manifest", "manifest does not match the checksum stored beside it"));

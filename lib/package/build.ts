@@ -14,9 +14,28 @@ export interface BuildOptions {
 
 const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,/i;
 
-function decodeDataUri(src: string): Uint8Array {
+/**
+ * Decode an inline image to the bytes that will actually be archived.
+ *
+ * Throws when the runtime has no base64 decoder, naming the object that owns the
+ * image. The alternative - substituting an empty `Uint8Array` - is not a graceful
+ * degradation: a zero-byte asset has a perfectly good checksum, so the package
+ * would validate clean and the bill would print with a part silently missing. The
+ * archived bytes are internally consistent, so no later validator can catch it.
+ * Build time is the only place it can be caught, and it must be loud.
+ *
+ * `what` is the caller's description of the object, so the message points an
+ * author at one editable thing rather than at the package as a whole.
+ */
+function decodeDataUri(src: string, what: string): Uint8Array {
+  if (typeof atob !== "function") {
+    throw new Error(
+      `cannot decode the inline image of ${what}: this runtime has no base64 decoder, ` +
+        `so the image cannot be archived and the package would be unusable`,
+    );
+  }
   const b64 = src.slice(src.indexOf(",") + 1);
-  const binary = typeof atob === "function" ? atob(b64) : "";
+  const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
   return out;
@@ -83,8 +102,11 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
 
     const role = o.type === "bill-part" ? "bill-part" : "image-placeholder";
     const name = uniqueAssetName(o.id);
+    // Decoded before any of `files`, `bySrc` or `assets` is touched, so a throw
+    // cannot leave a name reserved against an asset that was never archived.
+    const bytes = decodeDataUri(src, `object "${o.id}" (${o.name})`);
     bySrc.set(src, name);
-    files.set(name, decodeDataUri(src));
+    files.set(name, bytes);
     assets.push({
       id: o.id,
       role,

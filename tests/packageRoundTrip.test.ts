@@ -1,10 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildPackage, writePackage } from "@/lib/package/build";
 import { parsePackage } from "@/lib/package/parse";
 import type { Package } from "@/lib/package/format";
 import { validatePackage } from "@/lib/package/validate";
 import type { BillTemplate, TableCell } from "@/lib/template/types";
+
+import { strToU8 } from "fflate";
 
 const PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -126,6 +128,10 @@ const templateIn = (pkg: { files: Map<string, Uint8Array> }): BillTemplate =>
   JSON.parse(dec.decode(pkg.files.get("template.json")!));
 
 describe("package round-trip", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("survives write then read unchanged", () => {
     const back = parsePackage(writePackage(buildPackage(base())));
     expect(back.manifest.name).toBe("Invoice A4");
@@ -227,6 +233,22 @@ describe("package round-trip", () => {
     expect(validatePackage(back).ok).toBe(true);
   });
 
+  it("reports manifest bytes that do not match the digest stored beside them", () => {
+    // The archive-level case: someone edited manifest.json inside the zip and
+    // left the sibling digest alone, so the pair disagrees. The parsed manifest
+    // is untouched here, which is why re-serialising it still reproduces the
+    // *original* bytes and matches the digest - this is the one case only the
+    // check against `manifestBytes` can see.
+    const back = parsePackage(writePackage(buildPackage(base())));
+    const corrupted: Package = {
+      ...back,
+      manifestBytes: strToU8(`{"packageVersion":1,"name":"Swapped"}`),
+    };
+    const result = validatePackage(corrupted);
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((i) => i.path === "manifest")).toBe(true);
+  });
+
   it("declares a repeating field for a table's band, with its columns", () => {
     const repeat = buildPackage(withBand()).manifest.fields.find(
       (f) => f.type === "repeating",
@@ -272,5 +294,30 @@ describe("package round-trip", () => {
     const result = validatePackage(pkg);
     expect(result.ok).toBe(false);
     expect(result.issues.some((i) => i.path === "computed[0].args[0]")).toBe(true);
+  });
+
+  it("names the object whose image it cannot decode, rather than archiving nothing", () => {
+    // The bill part carries a well-formed data URI, so nothing about the
+    // template is wrong - only the runtime cannot read base64. Archiving a
+    // zero-byte asset anyway is the failure this rules out: its checksum would
+    // be the checksum of nothing, so `validatePackage` would pass and the bill
+    // would print with a silently missing part. The bytes are internally
+    // consistent, so no validator can catch it later; `buildPackage` is the
+    // only place it can be caught at all.
+    vi.stubGlobal("atob", undefined);
+
+    let thrown: unknown;
+    try {
+      buildPackage(base());
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const message = (thrown as Error).message;
+    // Both identifiers, so an author holding a 200-object template can find the
+    // one object that needs attention without guessing.
+    expect(message).toContain("obj_7");
+    expect(message).toContain("Bill Part 1");
   });
 });
