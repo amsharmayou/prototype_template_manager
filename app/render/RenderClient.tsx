@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 
 import DynamicForm from "@/components/render/DynamicForm";
+import { deriveForm } from "@/lib/package/form";
+import { PACKAGE_VERSION } from "@/lib/package/format";
+import type { PackageManifest } from "@/lib/package/format";
 import { Button } from "@/components/ui/Controls";
 import { exportPdf } from "@/lib/export/toPdf";
 import { downloadText, safeFilename } from "@/lib/export/download";
@@ -52,6 +55,30 @@ export default function RenderClient() {
     () => (template ? extractTemplateFields(template) : []),
     [template],
   );
+
+  const schema = useMemo(() => {
+    if (!template) return undefined;
+    const manifest: PackageManifest = {
+      packageVersion: PACKAGE_VERSION,
+      templateVersion: template.templateVersion,
+      name: template.meta?.name ?? "Untitled bill",
+      document: {
+        width: template.document.width,
+        height: template.document.height,
+        unit: "px",
+        dpi: 96,
+        paper: "A4",
+        currencyScale: 2,
+      },
+      template: "template.json",
+      assets: [],
+      fonts: [],
+      fields: [],
+      computed: [],
+      checksums: {},
+    };
+    return deriveForm(manifest, template);
+  }, [template]);
 
   const filled = useMemo(
     () => (template ? fillTemplate(template, values) : null),
@@ -277,7 +304,7 @@ export default function RenderClient() {
               and the form appears here.
             </p>
           ) : (
-            <DynamicForm fields={fields} values={values} onChange={setValue} />
+            <DynamicForm fields={fields} values={values} onChange={setValue} schema={schema} />
           )}
         </aside>
 

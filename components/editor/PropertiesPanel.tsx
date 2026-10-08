@@ -270,7 +270,7 @@ function SinglePanel({
       </Panel>
 
       {o.type === "text" ? <TextPanel controller={controller} o={o} /> : null}
-      {o.type === "table" ? <TablePanel controller={controller} o={o} /> : null}
+      {o.type === "table" ? <TablePanel controller={controller} state={state} o={o} /> : null}
       {o.type === "image-placeholder" ? <PlaceholderPanel controller={controller} o={o} /> : null}
       {o.type === "field" ? <FieldPanel controller={controller} o={o} /> : null}
       {o.type === "bill-part" ? (
@@ -472,9 +472,11 @@ function TextPanel({
 
 function TablePanel({
   controller,
+  state,
   o,
 }: {
   controller: EditorController;
+  state: EditorState;
   o: Extract<TemplateObject, { type: "table" }>;
 }) {
   // The controller owns the live table object; the panel never mutates it.
@@ -569,6 +571,103 @@ function TablePanel({
           }
         />
       </Field>
+
+      {state.selectedTable ? (
+        <div className="mt-3 rounded border border-neutral-200 p-2">
+          <div className="mb-1 text-[11px] font-semibold uppercase text-neutral-500">Repeating rows</div>
+          <label className="flex items-center gap-2 text-[11px]">
+            <input
+              type="checkbox"
+              checked={Boolean(state.selectedTable.repeat)}
+              onChange={(e) => {
+                const t = state.selectedTable!;
+                const lastRow = Math.max(0, t.rows - 1);
+                controller.setTableRepeat(
+                  t.id,
+                  e.target.checked
+                    ? { startRow: Math.min(1, lastRow), endRow: lastRow, key: "items" }
+                    : null,
+                );
+              }}
+            />
+            Repeat these rows once per item
+          </label>
+          {state.selectedTable.repeat ? (
+            <div className="mt-1 grid grid-cols-2 gap-2">
+              <label className="text-[11px]">
+                First row
+                <input
+                  type="number"
+                  min={0}
+                  max={state.selectedTable.rows - 1}
+                  value={state.selectedTable.repeat.startRow}
+                  onChange={(e) =>
+                    controller.setTableRepeat(state.selectedTable!.id, {
+                      ...state.selectedTable!.repeat!,
+                      startRow: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="text-[11px]">
+                Last row
+                <input
+                  type="number"
+                  min={0}
+                  max={state.selectedTable.rows - 1}
+                  value={state.selectedTable.repeat.endRow}
+                  onChange={(e) =>
+                    controller.setTableRepeat(state.selectedTable!.id, {
+                      ...state.selectedTable!.repeat!,
+                      endRow: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="col-span-2 text-[11px]">
+                Items key
+                <input
+                  type="text"
+                  value={state.selectedTable.repeat.key}
+                  onChange={(e) =>
+                    controller.setTableRepeat(state.selectedTable!.id, {
+                      ...state.selectedTable!.repeat!,
+                      key: e.target.value,
+                    })
+                  }
+                />
+              </label>
+              <label className="text-[11px]">
+                Max items
+                <input
+                  type="number"
+                  min={1}
+                  value={state.selectedTable.repeat.maxItems ?? 200}
+                  onChange={(e) =>
+                    controller.setTableRepeat(state.selectedTable!.id, {
+                      ...state.selectedTable!.repeat!,
+                      maxItems: Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+              <label className="flex items-center gap-2 text-[11px]">
+                <input
+                  type="checkbox"
+                  checked={state.selectedTable.repeat.repeatHeader === true}
+                  onChange={(e) =>
+                    controller.setTableRepeat(state.selectedTable!.id, {
+                      ...state.selectedTable!.repeat!,
+                      repeatHeader: e.target.checked,
+                    })
+                  }
+                />
+                Repeat header when split
+              </label>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       <details className="rounded border border-neutral-200">
         <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-neutral-600">

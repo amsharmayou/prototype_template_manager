@@ -17,6 +17,7 @@ import {
 } from "fabric";
 
 import { BillTable } from "@/lib/canvas/objects/BillTable";
+import { normaliseRepeat } from "@/lib/canvas/tableRepeat";
 import { interiorGridLevels } from "@/lib/canvas/tableGrid";
 import { FieldObject } from "@/lib/canvas/objects/BillField";
 import {
@@ -70,9 +71,16 @@ import {
 import { evenSizes, MIN_COL_WIDTH, MIN_ROW_HEIGHT } from "@/lib/template/geometry";
 import { hydrateTemplate } from "@/lib/template/hydrate";
 import { serialiseObjects, defaultName } from "@/lib/template/serialize";
+import { buildPackage, writePackage } from "@/lib/package/build";
+import { parsePackage } from "@/lib/package/parse";
+import { resolvePackage } from "@/lib/package/resolve";
+import type { ComputedSpec } from "@/lib/package/format";
+import { renderHtml } from "@/lib/render";
 import type {
   BillTemplate,
   PlaceholderSpec,
+  TableObject,
+  TableRepeat,
   TemplateObject,
 } from "@/lib/template/types";
 import { A4_HEIGHT, A4_WIDTH } from "@/lib/template/types";
@@ -145,6 +153,13 @@ export interface EditorState {
   canRedo: boolean;
   /** Cell currently open for inline editing, if any. */
   editingCell: { tableId: string; index: number } | null;
+  /**
+   * The selected table with its repeat band, or null when none is selected.
+   *
+   * A plain template object rather than the live Fabric instance: `rows` and
+   * `columns` are class getters there, so spreading one silently drops them.
+   */
+  selectedTable: (TableObject & { repeat?: TableRepeat }) | null;
   /** Rows/columns requested by the table tool, awaiting confirmation. */
   /**
    * The table box the user has just dragged out and not yet given a shape.
@@ -189,8 +204,7 @@ export interface EditorState {
 
 type Listener = () => void;
 
-/** Tool id -> value stored on an object's `appType` field. */
-const APP_TYPE_FOR: Record<string, string> = {
+/** Tool id -> value stored on an object's `appType` field. */const APP_TYPE_FOR: Record<string, string> = {
   "rounded-rect": "rounded-rect",
   rect: "rect",
   ellipse: "ellipse",
@@ -205,6 +219,25 @@ const APP_TYPE_FOR: Record<string, string> = {
   hr: "hr",
   vr: "vr",
 };
+
+/**
+ * The totals a band's trailing row reads: the amount column of every repeat,
+ * summed, then added into one total.
+ *
+ * Both the app and the E2E suite derive their figures from this, so a spec the
+ * test asserts on is the same one the render page would evaluate.
+ */
+function computedSpecsFor(t: BillTemplate): ComputedSpec[] {
+  const specs: ComputedSpec[] = t.objects
+    .flatMap((o) => (o.type === "table" && o.repeat ? [o] : []))
+    .map((o) => ({
+      key: "subtotal",
+      op: "sum" as const,
+      args: [`${(o as { repeat: { key: string } }).repeat.key}.amount`],
+    }));
+  specs.push({ key: "total", op: "add", args: ["subtotal"] });
+  return specs;
+}
 
 /** Snap a value to the nearest grid multiple. */
 export function snap(value: number, size: number): number {
@@ -265,6 +298,7 @@ export class EditorController {
     canUndo: false,
     canRedo: false,
     editingCell: null,
+    selectedTable: null,
     pendingTable: null,
     documentName: "Untitled bill template",
     objectCount: 0,
@@ -2458,16 +2492,53 @@ export class EditorController {
    * Mutate the document's table through a callback. The properties panel
    * uses this so the canvas object is never mutated directly from React.
    */
-  updateTable(mutate: (table: BillTable) => void, label = "Edit table"): void {
-    const table = this.getTable();
-    if (!table) return;
-    mutate(table);
-    table.syncDimensions();
-    this.canvas?.requestRenderAll();
-    this.commit(label);
+   updateTable(mutate: (table: BillTable) => void, label = "Edit table"): void {
+     const table = this.getTable();
+     if (!table) return;
+     mutate(table);
+     table.syncDimensions();
+     this.canvas?.requestRenderAll();
+     this.commit(label);
+   }
+
+  setTableRepeat(tableId: string, repeat: Partial<TableRepeat> | null): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const target = canvas.getObjects().find((o) => o instanceof BillTable && this.getId(o) === tableId);
+    if (!(target instanceof BillTable)) return;
+
+    if (repeat === null) {
+      target.repeat = undefined;
+      this.commit("Clear repeating rows");
+      canvas.requestRenderAll();
+      return;
+    }
+    const rowCount = Array.isArray(target.rowHeights) ? target.rowHeights.length : 0;
+    const next = normaliseRepeat(repeat, rowCount);
+    if (!next) return;
+    target.repeat = next;
+    this.commit("Set repeating rows");
+    canvas.requestRenderAll();
   }
 
   /**
+   * Render a template the way the app does, with the totals a band's trailing
+   * row needs. Reached through `window.__btm`, which only exists in development,
+   * so the E2E suite can read the renderer's output without a second browser
+   * round trip.
+   */
+  renderHtmlForTest(template: BillTemplate, values: Record<string, string> = {}): string {
+    return renderHtml(template, values, { computed: computedSpecsFor(template) }).html;
+  }
+
+  /** Build, write, parse and resolve a package, then render what comes back. */
+  packageRoundTripHtml(template: BillTemplate): string {
+    const pkg = buildPackage(template);
+    const { template: resolved } = resolvePackage(parsePackage(writePackage(pkg)));
+    return renderHtml(resolved, {}, { computed: computedSpecsFor(template) }).html;
+  }
+
+   /**
  * Re-cut a part from wherever it currently sits.
  *
  * `normalise` overrides the whitening for this one operation. Left undefined —
@@ -2671,12 +2742,23 @@ export class EditorController {
       isReference: false,
     }));
 
+    // The selected table as a plain template object, not the live Fabric
+    // instance: `rows` and `columns` are class getters there, so a spread of it
+    // silently drops them and the panel would read `undefined` for the row
+    // count. Serialising also keeps the canvas reference out of React state.
+    const selectedTemplates = this.getSelectedTemplates();
+    const selectedTable =
+      selectedTemplates.length === 1 && selectedTemplates[0]!.type === "table"
+        ? (selectedTemplates[0] as TableObject & { repeat?: TableRepeat })
+        : null;
+
     this.setState({
       selection,
       layers,
       objectCount: traced.length,
       canUndo: this.history.canUndo,
       canRedo: this.history.canRedo,
+      selectedTable,
     });
   }
 

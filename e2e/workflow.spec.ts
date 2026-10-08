@@ -93,6 +93,7 @@ interface EditorWindow extends Window {
       rowHeights: number[];
       setColumnWidth(index: number, value: number): void;
       setRowHeight(index: number, value: number): void;
+      setCellText(row: number, col: number, text: string): void;
       getBoundingRect(): {
         left: number;
         top: number;
@@ -265,9 +266,11 @@ test.describe("Bill template tracing workflow", () => {
     await page.mouse.click(custAt.x, custAt.y);
     await page.waitForTimeout(200);
 
-    // The template must contain what was traced.
+    // The template must contain what was traced. The version is the current
+    // schema's: a v1 template is still a valid v2 one, so the traced output
+    // carries the version this build writes.
     const template = await page.evaluate(() => window.__btm.getTemplate());
-    expect(template.templateVersion).toBe(1);
+    expect(template.templateVersion).toBe(2);
     expect(template.document).toEqual({ width: A4_W, height: A4_H });
 
     const types = template.objects.map((o) => o.type);
@@ -409,8 +412,9 @@ test.describe("Bill template tracing workflow", () => {
     // JSON template
     const jsonFile = await grab("JSON Template");
     expect(jsonFile.name).toMatch(/\.json$/);
+    // The exported JSON is the current schema version: what this build writes.
     const json = JSON.parse(jsonFile.read().toString("utf8")) as Template;
-    expect(json.templateVersion).toBe(1);
+    expect(json.templateVersion).toBe(2);
     expect(json.document).toEqual({ width: A4_W, height: A4_H });
     expect(json.objects.length).toBe(saved.objects.length);
     expect(json.objects.every((o) => o.type !== "image")).toBe(true);

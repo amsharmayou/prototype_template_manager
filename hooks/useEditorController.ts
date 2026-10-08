@@ -26,7 +26,9 @@ export function useEditorController(): {
   );
 
   // Expose the controller in development so the editor can be driven and
-  // inspected from the console or an automated browser test.
+  // inspected from the console or an automated browser test. The two render
+  // helpers the E2E suite uses hang off the controller itself, so there is
+  // nothing extra to attach here.
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") {
       (window as unknown as Record<string, unknown>).__btm = controller;

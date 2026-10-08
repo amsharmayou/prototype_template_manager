@@ -3,8 +3,8 @@
 import { useRef } from "react";
 
 import type { TemplateField } from "@/lib/template/dataBinding";
-// Shared with the offline share runtime so both forms ask for a tickmark in
-// exactly the same way and print the same glyph.
+import type { FormSchema } from "@/lib/package/form";
+import { repeatValue, rowsFromValue } from "@/lib/render/repeatForm";
 import { CHECKED_MARK, TICKMARK_OPTIONS } from "@/lib/share/kit";
 
 /**
@@ -16,10 +16,12 @@ export default function DynamicForm({
   fields,
   values,
   onChange,
+  schema,
 }: {
   fields: TemplateField[];
   values: Readonly<Record<string, string>>;
   onChange: (key: string, value: string) => void;
+  schema?: FormSchema;
 }) {
   const groups: Array<{ title: string; items: TemplateField[] }> = [
     { title: "Text fields", items: fields.filter((f) => f.source === "text" || f.source === "field") },
@@ -27,8 +29,60 @@ export default function DynamicForm({
     { title: "Images & signatures", items: fields.filter((f) => f.source === "image-placeholder") },
   ];
 
+  const repeatingFields = schema?.fields.filter((f) => f.type === "repeating") ?? [];
+
   return (
     <div className="space-y-4">
+      {repeatingFields.map((field) => {
+        const repeat = schema?.repeats.find((r) => r.key === field.key);
+        if (!repeat) return null;
+        return (
+          <fieldset key={field.key} className="rounded border border-neutral-200 p-2">
+            <legend className="text-[11px] uppercase text-neutral-500">{field.label}</legend>
+            {(() => {
+              const rows = rowsFromValue(values[field.key] ?? "", repeat.columns);
+              const commit = (next: Record<string, string>[]) =>
+                onChange(field.key, repeatValue(next, repeat.columns));
+              return (
+                <div className="flex flex-col gap-1">
+                  {rows.map((row, i) => (
+                    <div key={i} className="flex gap-2">
+                      {repeat.columns.map((col) => (
+                        <input
+                          key={col}
+                          aria-label={`${repeat.objectName} row ${i + 1} ${col}`}
+                          className="flex-1 border px-1 py-0.5 text-[12px]"
+                          value={row[col] ?? ""}
+                          onChange={(e) => {
+                            const next = rows.map((r, j) => (j === i ? { ...r, [col]: e.target.value } : r));
+                            commit(next);
+                          }}
+                        />
+                      ))}
+                      <button
+                        type="button"
+                        className="px-2 text-[11px]"
+                        disabled={rows.length <= 1}
+                        onClick={() => commit(rows.filter((_, j) => j !== i))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="self-start px-2 text-[11px]"
+                    disabled={rows.length >= repeat.maxItems}
+                    onClick={() => commit([...rows, {}])}
+                  >
+                    Add row
+                  </button>
+                </div>
+              );
+            })()}
+          </fieldset>
+        );
+      })}
       {groups.map((g) =>
         g.items.length === 0 ? null : (
           <section key={g.title}>
