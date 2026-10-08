@@ -258,6 +258,30 @@ function reportComputedCycles(
 }
 
 /**
+ * Re-serialise the manifest exactly as `writePackage` wrote it, or report that it
+ * cannot be.
+ *
+ * `JSON.stringify` throws a `TypeError` on a BigInt value or a cyclic structure,
+ * and this module's contract is that no entry point throws. Only an in-memory
+ * caller can produce either - bytes parsed from an archive cannot contain them -
+ * but the contract does not have an exception for callers who have not been
+ * invented yet. A failure to re-serialise is an issue, not an exception.
+ */
+function manifestAsWritten(manifest: Record<string, unknown>, out: Issue[]): Uint8Array | undefined {
+  try {
+    return strToU8(JSON.stringify(manifest, null, 2));
+  } catch {
+    out.push(
+      issue(
+        "manifest",
+        "manifest cannot be serialised, so it cannot be checked against the checksum stored beside it",
+      ),
+    );
+    return undefined;
+  }
+}
+
+/**
  * Validate a manifest against the archive it claims to describe.
  *
  * Returns issues rather than throwing, so a host can show every problem at once
@@ -300,8 +324,11 @@ export function validateManifest(
   if (manifestSha256 !== undefined) {
     if (manifestBytes && sha256HexBytes(manifestBytes) !== manifestSha256) {
       out.push(issue("manifest", "manifest does not match the checksum stored beside it"));
-    } else if (sha256HexBytes(strToU8(JSON.stringify(manifest, null, 2))) !== manifestSha256) {
-      out.push(issue("manifest", "manifest was edited after it was read"));
+    } else {
+      const written = manifestAsWritten(manifest, out);
+      if (written && sha256HexBytes(written) !== manifestSha256) {
+        out.push(issue("manifest", "manifest was edited after it was read"));
+      }
     }
   }
 

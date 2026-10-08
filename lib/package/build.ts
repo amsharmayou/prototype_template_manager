@@ -12,7 +12,30 @@ export interface BuildOptions {
   currencyScale?: number;
 }
 
-const DATA_IMAGE = /^data:image\/[a-z0-9.+-]+;base64,/i;
+/**
+ * An inline image, capturing its mime subtype.
+ *
+ * Not global: a shared `/g` regex carries `lastIndex` between `exec` calls and
+ * silently stops matching.
+ */
+const DATA_IMAGE = /^data:(image\/([a-z0-9.+-]+));base64,/i;
+
+/**
+ * Archive extension taken from the URI's mime subtype.
+ *
+ * `ManifestAsset` records no mime type, so the member's name is the only durable
+ * record of what the bytes are. Hardcoding `.png` filed an inline JPEG under a name
+ * that claims otherwise, and nothing downstream could recover the truth.
+ */
+function imageExtension(src: string): string {
+  const subtype = DATA_IMAGE.exec(src)?.[2] ?? "";
+  const cleaned = subtype
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 16);
+  return cleaned.length > 0 ? cleaned : "img";
+}
 
 /**
  * Decode an inline image to the bytes that will actually be archived.
@@ -83,12 +106,12 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
   const assets: PackageManifest["assets"] = [];
   const bySrc = new Map<string, string>();
 
-  const uniqueAssetName = (id: string): string => {
-    const base = `assets/${safeName(id)}.png`;
+  const uniqueAssetName = (id: string, ext: string): string => {
+    const base = `assets/${safeName(id)}.${ext}`;
     if (!files.has(base)) return base;
     let n = 2;
-    while (files.has(`assets/${safeName(id)}-${n}.png`)) n += 1;
-    return `assets/${safeName(id)}-${n}.png`;
+    while (files.has(`assets/${safeName(id)}-${n}.${ext}`)) n += 1;
+    return `assets/${safeName(id)}-${n}.${ext}`;
   };
 
   const objects: TemplateObject[] = template.objects.map((o) => {
@@ -101,7 +124,7 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
     if (known) return { ...o, src: `pkg://${known}` } as TemplateObject;
 
     const role = o.type === "bill-part" ? "bill-part" : "image-placeholder";
-    const name = uniqueAssetName(o.id);
+    const name = uniqueAssetName(o.id, imageExtension(src));
     // Decoded before any of `files`, `bySrc` or `assets` is touched, so a throw
     // cannot leave a name reserved against an asset that was never archived.
     const bytes = decodeDataUri(src, `object "${o.id}" (${o.name})`);
@@ -136,8 +159,17 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
   // line-item editor while the renderer's computed totals still reference
   // `items.amount` - a form that silently cannot be filled in.
   for (const o of template.objects) {
-    if (o.type !== "table" || !o.repeat || typeof o.repeat.key !== "string") continue;
-    const key = o.repeat.key;
+    if (o.type !== "table" || !o.repeat) continue;
+    // This loop is the only place a band key can be normalised, and every other
+    // layer that reads one already trims: `validateManifest` compares `key.trim()`
+    // and `repeatsOf` in `deriveForm` stores `band.key.trim()`. Emitting the raw
+    // value declared a repeat under a name no computed arg could resolve against,
+    // so the package failed its own validator - and a form derived from it would
+    // bind a different name than the manifest declared.
+    const key = typeof o.repeat.key === "string" ? o.repeat.key.trim() : "";
+    // Whitespace-only names no values array a form could bind to, and would put a
+    // blank field key into the manifest, which the validator rejects outright.
+    if (key.length === 0) continue;
     // A band key is also a candidate flat token, so `extractTemplateFields` may
     // already have claimed it. `repeats` is keyed by field key and needs one
     // entry per band, so an exact-key hit retypes that field instead of adding a
@@ -151,6 +183,13 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
       type: "repeating" as const,
       source: "table" as const,
       objectName: o.name,
+      // A band whose cells carry no `{{token}}` yields `[]`, and the validator
+      // rejects a `repeating` field with no columns at `fields[n].columns`. That
+      // is left to surface at validation rather than suppressed here: a band with
+      // no tokens is an authoring mistake, and inventing a placeholder column to
+      // satisfy the shape check would hide it behind a field nothing fills. The
+      // package reports the problem instead of shipping clean and silently
+      // omitting the line items.
       columns: bandColumns(o, o.repeat.startRow, o.repeat.endRow),
       maxItems: o.repeat.maxItems,
     };
