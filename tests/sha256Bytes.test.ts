@@ -21,8 +21,9 @@ describe("sha256HexBytes", () => {
   });
 
   it("differs from the string form for bytes that are not valid UTF-8", () => {
-    // 0xff is never a legal UTF-8 byte. Handed to the string form it becomes a
-    // replacement character, so that digest describes a different byte stream.
+    // 0xff is never a legal UTF-8 byte. `fromCharCode` reads it as the code
+    // point U+00FF, which `utf8Bytes` encodes as the two bytes 0xc3 0xbf, so the
+    // string form hashes 4 bytes where the byte form hashes 3.
     expect(sha256HexBytes(new Uint8Array([0xff, 0x00, 0x41]))).not.toBe(
       sha256Hex(String.fromCharCode(0xff, 0x00, 0x41)),
     );
@@ -34,8 +35,10 @@ describe("sha256HexBytes", () => {
   });
 
   it("leaves the caller's array untouched", () => {
-    // The digest pads by writing into a working copy, so hashing must not grow
-    // or otherwise disturb the buffer it was handed.
+    // This pins the wrapper's contract: the buffer handed in comes back
+    // unmodified. It does not cover the copy inside the private core, which no
+    // test can reach - `Array.from` at this wrapper already guards the caller's
+    // bytes, so this would pass with or without that internal copy.
     const bytes = new Uint8Array([0x61, 0x62, 0x63]);
     sha256HexBytes(bytes);
     expect(Array.from(bytes)).toEqual([0x61, 0x62, 0x63]);
@@ -48,11 +51,10 @@ describe("sha256HexBytes against the platform digest", () => {
   // agrees with itself, so every one of those would still pass. Only an
   // independent digest can catch that.
   //
-  // The lengths are the ones where `length % 64` changes behaviour. At 55 the
-  // padding runs past the end of the block carrying the message and needs a
-  // second one; at 56 it fits in the current block. 63/64/65 walk that boundary
-  // a byte at a time, and 127/128/129 repeat it across a second block, so a
-  // length field that spills or truncates cannot survive all of them.
+  // 55 is the last length whose padding still fits the message's own block; 56
+  // is the first that spills into a second one. 56 is therefore the exact length
+  // where padding behaviour changes, and 63/64/65 and 127/128/129 walk that
+  // boundary a byte at a time.
   const byteLengths = [0, 1, 54, 55, 56, 57, 63, 64, 65, 127, 128, 129];
 
   const deterministicBytes = (n: number): Uint8Array =>
@@ -67,13 +69,13 @@ describe("sha256HexBytes against the platform digest", () => {
     );
   });
 
-  it("is checked at every length where the padding block changes shape", () => {
-    // The list is the test's whole value: it is what names the boundaries. This
-    // asserts the boundaries are still covered if someone trims the list.
-    expect(byteLengths.filter((n) => n % 64 === 55)).toContain(55);
-    expect(byteLengths.filter((n) => n % 64 === 56)).toContain(56);
-    expect(byteLengths.filter((n) => n % 64 === 63)).toContain(63);
-    expect(byteLengths.filter((n) => n % 64 === 0)).toContain(64);
+  it("probes the padding boundaries rather than arbitrary lengths", () => {
+    // The list is the whole value of this block: it names the boundaries. This
+    // asserts each residue class the list claims to probe is still represented,
+    // so trimming the list cannot quietly drop the coverage.
+    for (const residue of [0, 55, 56, 63]) {
+      expect(byteLengths.filter((n) => n % 64 === residue)).not.toHaveLength(0);
+    }
   });
 });
 

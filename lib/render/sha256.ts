@@ -80,8 +80,9 @@ export function sha256Hex(input: string): string {
 
 /**
  * Hash raw bytes. `sha256Hex` cannot be used for this: it runs its input through
- * a UTF-8 encoder first, so any byte sequence that is not valid UTF-8 would be
- * hashed as its replacement-character substitution rather than as itself. A
+ * a UTF-8 encoder first, and a byte that is not valid UTF-8 has no string form
+ * that encodes back to it - the nearest legal code point encodes to a longer,
+ * different sequence - so that digest describes a different byte stream. A
  * package checksum covers PNG bytes, so it must hash what is actually stored.
  */
 export function sha256HexBytes(bytes: Uint8Array): string {
