@@ -34,6 +34,8 @@ function pkg(
 const errors = (p: Package) =>
   validatePackage(p).issues.filter((i) => i.severity === "error");
 
+const errorAt = (p: Package, path: string) => errors(p).find((i) => i.path === path);
+
 describe("validatePackage", () => {
   it("accepts a well-formed package", () => {
     expect(validatePackage(pkg())).toEqual({ ok: true, issues: [] });
@@ -133,6 +135,164 @@ describe("validatePackage", () => {
   it("reports a checksum mismatch", () => {
     const p = pkg({ checksums: { "template.json": "0".repeat(64) } });
     expect(errors(p).some((i) => i.path === "checksums.template.json")).toBe(true);
+  });
+
+  it("rejects a computed arg naming a column the repeat does not declare", () => {
+    const p = pkg({
+      fields: [
+        {
+          key: "items",
+          label: "Items",
+          type: "repeating" as const,
+          source: "table" as const,
+          objectName: "Items",
+          columns: ["name", "qty"],
+        },
+      ],
+      computed: [{ key: "t", op: "sum" as const, args: ["items.amount"] }],
+    });
+    expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
+  });
+
+  it("rejects a computed arg naming a repeat that is not declared", () => {
+    const p = pkg({
+      computed: [{ key: "t", op: "sum" as const, args: ["items.amount"] }],
+    });
+    expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
+  });
+
+  it("rejects a computed arg that is neither a field key nor another computed key", () => {
+    const p = pkg({
+      fields: [
+        {
+          key: "customer_name",
+          label: "Customer",
+          type: "text" as const,
+          source: "text" as const,
+          objectName: "X",
+        },
+      ],
+      computed: [{ key: "total", op: "sum" as const, args: ["nonsense"] }],
+    });
+    expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
+  });
+
+  it("accepts a computed chain whose args resolve to other computed keys", () => {
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount", "qty"],
+      },
+    ];
+    const computed: PackageManifest["computed"] = [
+      { key: "subtotal", op: "sum", args: ["items.amount"] },
+      { key: "tax", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+      { key: "total", op: "add", args: ["subtotal", "tax"] },
+    ];
+    // Not clean: `tax_rate` is referenced as a rate but never declared.
+    expect(errorAt(pkg({ fields, computed }), "computed[1].rateKey")).toBeDefined();
+
+    const withRate: PackageManifest["fields"] = [
+      ...fields,
+      { key: "tax_rate", label: "Tax rate", type: "number", source: "text", objectName: "R" },
+    ];
+    expect(validatePackage(pkg({ fields: withRate, computed })).issues).toEqual([]);
+
+    // The chain is only clean because it resolves; breaking one link must bite.
+    const broken: PackageManifest["computed"] = [
+      computed[0],
+      computed[1],
+      { key: "total", op: "add", args: ["subtotal", "taxx"] },
+    ];
+    expect(errorAt(pkg({ fields: withRate, computed: broken }), "computed[2].args[1]")).toBeDefined();
+  });
+
+  it("accepts a chain whose rateKey resolves and rejects one that does not", () => {
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "tax_rate",
+        label: "Tax rate",
+        type: "number",
+        source: "text",
+        objectName: "R",
+      },
+    ];
+    const computed: PackageManifest["computed"] = [
+      { key: "tax", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+    ];
+    // `subtotal` is not declared anywhere, so this is not clean either way.
+    expect(errorAt(pkg({ fields, computed }), "computed[0].rateKey")).toBeUndefined();
+
+    const chain: PackageManifest["computed"] = [
+      { key: "subtotal", op: "sum", args: [] },
+      { key: "tax", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+    ];
+    expect(validatePackage(pkg({ fields, computed: chain })).issues).toEqual([]);
+
+    const broken: PackageManifest["computed"] = [
+      chain[0],
+      { key: "tax", op: "percent", args: ["subtotal"], rateKey: "nope" },
+    ];
+    expect(errorAt(pkg({ fields, computed: broken }), "computed[1].rateKey")).toBeDefined();
+  });
+
+  it("reports a string where the assets array is required", () => {
+    expect(errorAt(pkg({ assets: "no" as never }), "assets")?.message).toContain("string");
+  });
+
+  it("reports a string where the fonts array is required", () => {
+    expect(errorAt(pkg({ fonts: "no" as never }), "fonts")?.message).toContain("string");
+  });
+
+  it("reports a string where the fields array is required", () => {
+    expect(errorAt(pkg({ fields: "no" as never }), "fields")?.message).toContain("string");
+  });
+
+  it("reports a string where the computed array is required", () => {
+    expect(errorAt(pkg({ computed: "no" as never }), "computed")?.message).toContain("string");
+  });
+
+  it("rejects a field source outside the union", () => {
+    const p = pkg({
+      fields: [
+        {
+          key: "x",
+          label: "X",
+          type: "text" as const,
+          source: "telepathy" as never,
+          objectName: "O",
+        },
+      ],
+    });
+    expect(errorAt(p, "fields[0].source")).toBeDefined();
+  });
+
+  it("rejects an asset role outside the union", () => {
+    const p = pkg({
+      assets: [{ id: "a", role: "mascot" as never, file: "template.json", width: 1, height: 1 }],
+    });
+    expect(errorAt(p, "assets[0].role")).toBeDefined();
+  });
+
+  it("rejects a dotted arg whose head is not a repeating field", () => {
+    const p = pkg({
+      fields: [
+        {
+          key: "sub",
+          label: "Sub",
+          type: "text" as const,
+          source: "text" as const,
+          objectName: "S",
+          columns: ["amount"],
+        },
+      ],
+      computed: [{ key: "t", op: "sum" as const, args: ["sub.amount"] }],
+    });
+    expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
   });
 
   it("never throws on a garbage manifest", () => {
