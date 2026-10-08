@@ -26,6 +26,8 @@ import { PACKAGE_VERSION } from "@/lib/package/format";
 import { sha256HexBytes } from "@/lib/render/sha256";
 import { TEMPLATE_VERSION } from "@/lib/template/types";
 
+import { strToU8 } from "fflate";
+
 const FIELD_TYPES = new Set([
   "text",
   "number",
@@ -264,9 +266,35 @@ function reportComputedCycles(
 export function validateManifest(
   manifest: unknown,
   files: ReadonlyMap<string, Uint8Array>,
+  manifestBytes?: Uint8Array,
+  manifestSha256?: string,
 ): Issue[] {
   const out: Issue[] = [];
   if (!isRecord(manifest)) return [issue("", "manifest is not an object")];
+
+  // `checksums` below cannot cover the manifest: a file cannot contain its own
+  // hash, so the digest is written beside it and both are handed in together.
+  //
+  // Two separate things can drift from that digest, and checking only the first
+  // blesses the second. The archived bytes can be altered, which is the case a
+  // checksum catches. Or the parsed manifest can be edited in memory after the
+  // parse - a host that rewrites `name` or drops an asset from a package it
+  // already loaded - in which case the bytes and the sibling digest still agree
+  // with each other and only disagree with the object actually being validated.
+  //
+  // Re-serialising is what ties the object to the digest, and it is exact:
+  // `writePackage` writes the manifest with `JSON.stringify(..., null, 2)` and
+  // `JSON.parse` preserves key order, so an untouched manifest reproduces its
+  // archived bytes bit for bit. Both messages are reported as the same `manifest`
+  // path because to a host they are one fact: this manifest is not the one that
+  // was signed over.
+  if (manifestSha256 !== undefined) {
+    if (manifestBytes && sha256HexBytes(manifestBytes) !== manifestSha256) {
+      out.push(issue("manifest", "manifest does not match the checksum stored beside it"));
+    } else if (sha256HexBytes(strToU8(JSON.stringify(manifest, null, 2))) !== manifestSha256) {
+      out.push(issue("manifest", "manifest was edited after it was read"));
+    }
+  }
 
   if (manifest.packageVersion !== PACKAGE_VERSION) {
     out.push(
@@ -502,6 +530,14 @@ export function validateManifest(
  */
 export function validatePackage(pkg: Package): { ok: boolean; issues: Issue[] } {
   const files = pkg?.files instanceof Map ? pkg.files : new Map<string, Uint8Array>();
-  const issues = validateManifest(pkg?.manifest, files);
+  // The manifest is excluded from `files` by the parser, so its bytes are carried
+  // alongside the digest and verified here.
+  const manifestBytes = pkg?.manifestBytes;
+  const issues = validateManifest(
+    pkg?.manifest,
+    files,
+    manifestBytes,
+    pkg?.manifestSha256,
+  );
   return { ok: issues.every((i) => i.severity !== "error"), issues };
 }

@@ -141,4 +141,11 @@ export interface Package {
   manifest: PackageManifest;
   /** Every archive member except the manifest, keyed by its archive-relative path. */
   files: Map<string, Uint8Array>;
+  /**
+   * The manifest member as read, carried beside the digest it is checked against.
+   * The manifest cannot sit in `checksums`, because a file cannot hold its own hash.
+   */
+  manifestBytes?: Uint8Array;
+  /** Digest of the manifest as read, verified by `validatePackage`. */
+  manifestSha256?: string;
 }
