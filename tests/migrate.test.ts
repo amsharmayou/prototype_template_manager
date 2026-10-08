@@ -1,10 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { migrateTemplate } from "@/lib/template/migrate";
-import {
-  TEMPLATE_VERSION,
-  type PlaceholderSpec,
-} from "@/lib/template/types";
+import { TEMPLATE_VERSION, type PlaceholderSpec } from "@/lib/template/types";
 
 // Deliberately untyped, and deliberately NOT annotated as `BillTemplate`:
 // `BillTemplate` describes a template at the *current* version, so a v1 document

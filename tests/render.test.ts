@@ -880,7 +880,7 @@ describe("renderHtml", () => {
     expect(a).not.toBe(b);
   });
 
-it("refuses an unsupported template version instead of guessing", () => {
+  it("refuses an unsupported template version instead of guessing", () => {
     expect(() => renderHtml(tpl((t) => { (t as never as { templateVersion: number }).templateVersion = 99; })))
       .toThrow(/version/i);
   });

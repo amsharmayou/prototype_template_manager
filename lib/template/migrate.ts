@@ -16,9 +16,18 @@ import {
  * did not check the version at all, so a file from a newer build was accepted
  * and rendered with whatever fields this build happened to recognise.
  *
- * Every field read is defensive. All three template load sites cast
- * `JSON.parse` output straight to `BillTemplate`, so a truncated or hand-edited
- * file arrives with missing pieces.
+ * Every field read is defensive. Six sites take untrusted parsed JSON as a
+ * `BillTemplate` without validating it, so a truncated or hand-edited file
+ * arrives with missing pieces:
+ *
+ *   app/render/RenderClient.tsx          (upload)
+ *   components/editor/TopBar.tsx         (open)
+ *   components/editor/UploadScreen.tsx   (two: into the editor, and render)
+ *   lib/client/templateStore.ts
+ *   lib/canvas/EditorController.ts       (history restore)
+ *
+ * That count is the work item: each one is a candidate entry point for this
+ * function.
  */
 export function migrateTemplate(raw: unknown): { template: BillTemplate; notes: string[] } {
   const notes: string[] = [];
