@@ -30,15 +30,45 @@ const safeScale = (scale: number): number =>
  * integer part as text, so `19.99` becomes `1999` without ever being a float. A
  * half rounds up, which is the convention a customer expects on a rounded bill.
  */
+const isDigit = (ch: string | undefined): boolean => ch !== undefined && ch >= "0" && ch <= "9";
+
+/** A whole decimal figure, optionally signed, with an optional fraction. */
+const NUMERIC = /^(-?)(\d*)(?:\.(\d*))?$/;
+
+/**
+ * Drop everything before the figure itself, so a currency marker or stray prose
+ * does not cost the host its figure.
+ *
+ * A value that is already a figure is returned untouched, which is what keeps
+ * ".50" reading half a unit rather than fifty. Only when the whole text is not a
+ * figure is the leading marker dropped, and the figure starts at its first digit:
+ * stripping up to that digit cannot lose a decimal point, because there was none
+ * in front of it to lose.
+ */
+function trimToFigure(text: string): string {
+  if (NUMERIC.test(text)) return text;
+  for (let i = 0; i < text.length; i += 1) {
+    if (!isDigit(text[i])) continue;
+    const signed = i > 0 && text[i - 1] === "-";
+    return text.slice(signed ? i - 1 : i);
+  }
+  return "";
+}
+
 export function parseMinorUnits(value: unknown, scale: number): number {
   const s = safeScale(scale);
-  if (typeof value === "number") {
-    return Number.isFinite(value) ? Math.round(value * 10 ** s) : 0;
-  }
-  if (typeof value !== "string") return 0;
+  if (typeof value !== "string" && typeof value !== "number") return 0;
 
-  const trimmed = value.trim().replace(/,/g, "").replace(/^[^0-9.-]+/, "");
-  const match = /^(-?)(\d*)(?:\.(\d*))?$/.exec(trimmed);
+  // One parse path for both shapes. A row cell is a number whenever the host's
+  // JSON leaves it unquoted, and reading it as text is the only way `1.005`
+  // reaches 1.01 rather than the 1.00 a float multiply gives it -- a one-paisa
+  // difference decided purely by whether the host quoted its number. A JSON
+  // reviver cannot reconcile the two: it receives the already-parsed value, so
+  // the digit text is gone by then. `String` of a double is the shortest text
+  // that round-trips, so nothing is lost on the way in.
+  const text = typeof value === "number" ? String(value) : value;
+  const trimmed = trimToFigure(text.replace(/,/g, "").replace(/\s+/g, ""));
+  const match = NUMERIC.exec(trimmed);
   if (!match) return 0;
 
   const sign = match[1] === "-" ? -1 : 1;
@@ -50,7 +80,11 @@ export function parseMinorUnits(value: unknown, scale: number): number {
     const kept = fracPart.slice(0, s).padEnd(s, "0");
     const next = Number(fracPart[s] ?? "0");
     const base = Number(s === 0 ? whole : `${whole}${kept}`) || 0;
-    return sign * (next >= 5 ? base + 1 : base);
+    const rounded = next >= 5 ? base + 1 : base;
+    // Guarded as the other branch is. Returning an unsafe integer here produced a
+    // plausible wrong figure that formatted cleanly downstream, which is worse
+    // than the zero the module's convention already returns for such an input.
+    return Number.isSafeInteger(rounded) ? sign * rounded : 0;
   }
   const digits = s === 0 ? whole : `${whole}${fracPart.padEnd(s, "0")}`;
 
@@ -114,7 +148,15 @@ function flat(arg: string, values: Values, numeric: Record<string, number>, s: n
   return parseMinorUnits(values[arg], s);
 }
 
-/** One cell of a dotted arg at a given row index. */
+/** Whether `name` matches a whole key rather than a `repeat.column` path. */
+const nameMatches = (name: string, values: Values, numeric: Record<string, number>): boolean =>
+  has(numeric, name) || Object.prototype.hasOwnProperty.call(values, name);
+
+/**
+ * One cell of a dotted arg at a given row index, or the whole name when there is
+ * no row for it: a name that matched a key whole has no column to read, and the
+ * arg is only ever handed a row when it was read as a path.
+ */
 function cell(
   arg: string,
   values: Values,
@@ -122,9 +164,10 @@ function cell(
   s: number,
   row: Record<string, unknown> | undefined,
 ): number {
+  if (row === undefined) return flat(arg, values, numeric, s);
   const dot = arg.indexOf(".");
-  if (dot <= 0) return row ? parseMinorUnits(row[arg], s) : flat(arg, values, numeric, s);
-  return parseMinorUnits(row?.[arg.slice(dot + 1)], s);
+  if (dot <= 0) return parseMinorUnits(row[arg], s);
+  return parseMinorUnits(row[arg.slice(dot + 1)], s);
 }
 
 const split = (arg: string): [string, string] => {
@@ -192,8 +235,12 @@ export function computeAll(
     switch (spec.op) {
       case "sum": {
         for (const arg of args) {
+          // A dotted arg is a whole key first and a path second, because a field
+          // key may itself contain a dot and the validator resolves it that way.
+          // Splitting first read `x.y` as repeat `x` column `y`, so a package
+          // whose field is named `x.y` read the wrong figure.
           const [repeatKey] = split(arg);
-          if (repeatKey) {
+          if (repeatKey && !nameMatches(arg, values, numeric)) {
             for (const row of rowsFor(values, repeatKey)) result += cell(arg, values, numeric, s, row);
           } else {
             result += flat(arg, values, numeric, s);
@@ -206,11 +253,14 @@ export function computeAll(
         if (a && b) {
           const [aKey] = split(a);
           const [bKey] = split(b);
-          const aRows = aKey ? rowsFor(values, aKey) : [];
-          const bRows = bKey ? rowsFor(values, bKey) : [];
-          // One row per item of whichever side repeats; when both are flat this
-          // is a single product, which is what a bare `sum-times` means.
-          const count = Math.max(aRows.length, bRows.length, aKey || bKey ? 0 : 1);
+          const aWhole = nameMatches(a, values, numeric);
+          const bWhole = nameMatches(b, values, numeric);
+          const aRows = !aWhole && aKey ? rowsFor(values, aKey) : [];
+          const bRows = !bWhole && bKey ? rowsFor(values, bKey) : [];
+          // One row per item of whichever side repeats, and one product when
+          // neither does -- which is what a bare `sum-times` means. A flat side
+          // of a product whose other side repeats is read on every row.
+          const count = Math.max(aRows.length, bRows.length, 1);
           for (let i = 0; i < count; i += 1) {
             const av = cell(a, values, numeric, s, aRows[i]);
             const bv = cell(b, values, numeric, s, bRows[i]);
