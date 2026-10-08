@@ -150,6 +150,16 @@ export interface TableRepeat {
   maxItems?: number;
 }
 
+/**
+ * The cap a band falls back to when its own `maxItems` is absent or unusable.
+ *
+ * It is the single default every layer shares: the serialiser that writes the
+ * field, the renderer that applies the band, the form derivation and the
+ * normaliser all read this one number rather than each carrying its own copy,
+ * so a template cannot mean two different caps depending on which layer asked.
+ */
+export const DEFAULT_REPEAT_MAX_ITEMS = 200;
+
 export interface TableObject extends TemplateObjectBase {
   type: "table";
   rows: number;
