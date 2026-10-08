@@ -399,6 +399,18 @@ describe("validatePackage", () => {
     expect(errorAt(pkg({ fields, computed: looped }), "computed[1]")).toBeDefined();
   });
 
+  it("rejects a field whose key is only whitespace", () => {
+    // The same rule as the computed key above, on the field side: a key that is
+    // only whitespace cannot name anything, and `fieldKeys` is load-bearing for
+    // resolution, so it is rejected exactly as an empty key is.
+    const p = pkg({
+      fields: [
+        { key: "   ", label: "X", type: "text" as const, source: "text" as const, objectName: "O" },
+      ],
+    });
+    expect(errorAt(p, "fields[0].key")).toMatchObject({ severity: "error" });
+  });
+
   it("reports one issue per disjoint cycle, anchored at each ring's earliest entry", () => {
     const p = pkg({
       computed: [
