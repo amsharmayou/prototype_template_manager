@@ -162,16 +162,25 @@ function unresolved(
  * it here would contradict the order this module already documents and
  * implements, and would reject a key the evaluator resolves correctly.
  */
+function columnHead(
+  name: string,
+  fieldKeys: ReadonlySet<ManifestField["key"]>,
+  computedKeys: ReadonlySet<ComputedSpec["key"]>,
+  repeats: Readonly<RepeatColumns>,
+): string | undefined {
+  if (fieldKeys.has(name) || computedKeys.has(name)) return undefined;
+  const path = splitPath(name);
+  if (!path) return undefined;
+  return repeats.get(path.head)?.includes(path.tail) === true ? path.head : undefined;
+}
+
 function resolvesAsColumn(
   name: string,
   fieldKeys: ReadonlySet<ManifestField["key"]>,
   computedKeys: ReadonlySet<ComputedSpec["key"]>,
   repeats: Readonly<RepeatColumns>,
 ): boolean {
-  if (fieldKeys.has(name) || computedKeys.has(name)) return false;
-  const path = splitPath(name);
-  if (!path) return false;
-  return repeats.get(path.head)?.includes(path.tail) === true;
+  return columnHead(name, fieldKeys, computedKeys, repeats) !== undefined;
 }
 
 /** Names the op and the reference, because a bare "not allowed" is not a diagnosis. */
@@ -181,6 +190,44 @@ function columnArgMessage(op: string, name: string, label: string): string {
     `only "sum" and "sum-times" read one. ` +
     `Sum the column into a key of its own and combine that instead`
   );
+}
+
+/**
+ * Why two operands cannot be paired row by row, or undefined when they can.
+ *
+ * `sum-times` multiplies its two operands per row, which only means something
+ * inside one repeat band. Two different bands are independent data with no
+ * defined correspondence, so pairing row 1 of one with row 2 of the other is a
+ * guess whatever row counts each band turns out to hold. The manifest carries no
+ * row count for a repeat at all -- only its columns and an optional ceiling the
+ * author declared -- so a length comparison is not available here either.
+ *
+ * A flat operand has no rows to pair and stays legal: that is the rate-column
+ * case, one column multiplied by a single value.
+ */
+function pairableOperands(
+  spec: Record<string, unknown>,
+  fieldKeys: ReadonlySet<ManifestField["key"]>,
+  computedKeys: ReadonlySet<ComputedSpec["key"]>,
+  repeats: Readonly<RepeatColumns>,
+): { at: number; bad: string; good: string; badHead: string; goodHead: string } | undefined {
+  const args = Array.isArray(spec.args) ? spec.args : [];
+  const operands: { at: number; name: string }[] = [];
+  // The evaluator takes the first two string operands, so these are the first
+  // two of those, reported at their own indexes.
+  for (let j = 0; j < args.length && operands.length < 2; j += 1) {
+    const a = args[j];
+    if (typeof a === "string" && a.length > 0) operands.push({ at: j, name: a });
+  }
+  if (operands.length < 2) return undefined;
+  const first = operands[0]!;
+  const second = operands[1]!;
+  const firstHead = columnHead(first.name, fieldKeys, computedKeys, repeats);
+  const secondHead = columnHead(second.name, fieldKeys, computedKeys, repeats);
+  if (firstHead === undefined || secondHead === undefined || firstHead === secondHead) {
+    return undefined;
+  }
+  return { at: second.at, bad: second.name, good: first.name, badHead: secondHead, goodHead: firstHead };
 }
 
 /** A computed entry as a graph node. `deps` are node references, not names. */
@@ -560,6 +607,23 @@ export function validateManifest(
         out.push(issue(`computed[${i}].args[${j}]`, columnArgMessage(c.op, a, "arg")));
       }
     });
+
+    if (c.op === "sum-times") {
+      const pair = pairableOperands(c, fieldKeys, computedKeys, repeats);
+      if (pair) {
+        out.push(
+          issue(
+            `computed[${i}].args[${pair.at}]`,
+            `arg ${pair.bad}: op "sum-times" pairs its operands row by row, which only
+ means anything inside one repeat field; "${pair.bad}" is a column of repeat
+ "${pair.badHead}" and "${pair.good}" a column of repeat
+ "${pair.goodHead}". Sum one column into a key of its own and multiply
+ that instead`,
+          ),
+        );
+      }
+    }
+
     if (typeof c.rateKey !== "string" || c.rateKey.length === 0) return;
     if (c.rateKey === ownKey) {
       out.push(

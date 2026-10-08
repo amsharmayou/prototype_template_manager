@@ -303,6 +303,93 @@ describe("validatePackage", () => {
     ).toBeUndefined();
   });
 
+  it("refuses a sum-times that pairs columns of two different repeats", () => {
+    // `sum-times` pairs its two operands row by row, which only means anything
+    // inside one repeat band. Two bands are independent data with no defined
+    // correspondence, and the manifest records no row count, so the pairing is a
+    // guess however many rows each band happens to hold at fill time.
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "x",
+        label: "X",
+        type: "repeating",
+        source: "table",
+        objectName: "X",
+        columns: ["q"],
+      },
+      {
+        key: "y",
+        label: "Y",
+        type: "repeating",
+        source: "table",
+        objectName: "Y",
+        columns: ["r"],
+      },
+    ];
+    const at = errorAt(
+      pkg({ fields, computed: [{ key: "t", op: "sum-times", args: ["x.q", "y.r"] }] }),
+      "computed[0].args[1]",
+    );
+    expect(at).toBeDefined();
+    expect(at!.message).toContain("x.q");
+    expect(at!.message).toContain("y.r");
+    expect(at!.message).toContain("sum-times");
+    // Order is not special: either operand can be the one reported.
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "sum-times", args: ["y.r", "x.q"] }] }),
+        "computed[0].args[1]",
+      ),
+    ).toBeDefined();
+  });
+
+  it("still accepts a sum-times pairing two columns of one repeat", () => {
+    // The line-item case: one row of the table, multiplied within itself.
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["qty", "rate"],
+      },
+    ];
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "sum-times", args: ["items.qty", "items.rate"] }] }),
+        "computed[0].args[1]",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still accepts a sum-times whose other operand is flat", () => {
+    // Nothing to pair: one column times a single value is the rate-column case.
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["qty"],
+      },
+      { key: "flat", label: "Flat", type: "number", source: "text", objectName: "F" },
+    ];
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "sum-times", args: ["items.qty", "flat"] }] }),
+        "computed[0].args[1]",
+      ),
+    ).toBeUndefined();
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "sum-times", args: ["flat", "items.qty"] }] }),
+        "computed[0].args[1]",
+      ),
+    ).toBeUndefined();
+  });
+
   it("accepts a computed chain whose args resolve to other computed keys", () => {
     const fields: PackageManifest["fields"] = [
       {
