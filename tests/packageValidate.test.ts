@@ -177,6 +177,132 @@ describe("validatePackage", () => {
     expect(errorAt(p, "computed[0].args[0]")).toBeDefined();
   });
 
+  it("rejects a dotted repeat column on an op that has no meaning for one", () => {
+    // `sum` adds a column across rows and `sum-times` multiplies two per row.
+    // For every other op a dotted arg is a request the evaluator cannot honour:
+    // it reads args as whole names, so `items.qty` validated and then computed 0.
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount", "qty"],
+      },
+    ];
+    for (const op of ["add", "subtract", "multiply"] as const) {
+      const p = pkg({ fields, computed: [{ key: "t", op, args: ["items.qty"] }] });
+      const at = errorAt(p, "computed[0].args[0]");
+      expect(at, op).toBeDefined();
+      expect(at!.message).toContain(op);
+      expect(at!.message).toContain("items.qty");
+    }
+
+    const pct = pkg({
+      fields,
+      computed: [{ key: "t", op: "percent", args: ["items.qty"], rateKey: "rate" }],
+    });
+    const atRate = errorAt(pct, "computed[0].args[0]");
+    expect(atRate).toBeDefined();
+    expect(atRate!.message).toContain("percent");
+    expect(atRate!.message).toContain("items.qty");
+  });
+
+  it("rejects a dotted repeat column as a rate, which resolves like an arg", () => {
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount", "rate"],
+      },
+    ];
+    const p = pkg({
+      fields,
+      computed: [{ key: "t", op: "percent", args: ["subtotal"], rateKey: "items.rate" }],
+    });
+    const at = errorAt(p, "computed[0].rateKey");
+    expect(at).toBeDefined();
+    expect(at!.message).toContain("items.rate");
+  });
+
+  it("still accepts a dotted column on sum and sum-times", () => {
+    // The rule must not be over-applied: these two are the ops that define a
+    // meaning for a column.
+    const fields: PackageManifest["fields"] = [
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount", "qty"],
+      },
+    ];
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "subtotal", op: "sum", args: ["items.amount"] }] }),
+        "computed[0].args[0]",
+      ),
+    ).toBeUndefined();
+    expect(
+      errorAt(
+        pkg({
+          fields,
+          computed: [{ key: "t", op: "sum-times", args: ["items.qty", "items.amount"] }],
+        }),
+        "computed[0].args[0]",
+      ),
+    ).toBeUndefined();
+    expect(
+      errorAt(
+        pkg({
+          fields,
+          computed: [{ key: "t", op: "sum-times", args: ["items.qty", "items.amount"] }],
+        }),
+        "computed[0].args[1]",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still accepts a field key that itself contains a dot, on any op", () => {
+    // A dot in a key is legal, and whole-name resolution is tried first, so
+    // `x.y` is this field and not repeat `x` column `y`. Rejecting it here would
+    // contradict the resolution order the validator itself documents.
+    const fields: PackageManifest["fields"] = [
+      { key: "x.y", label: "Dotted", type: "number", source: "text", objectName: "A" },
+      {
+        key: "items",
+        label: "Items",
+        type: "repeating",
+        source: "table",
+        objectName: "Items",
+        columns: ["amount", "y"],
+      },
+    ];
+    for (const op of ["add", "subtract", "multiply"] as const) {
+      expect(
+        errorAt(pkg({ fields, computed: [{ key: "t", op, args: ["x.y"] }] }), "computed[0].args[0]"),
+        op,
+      ).toBeUndefined();
+    }
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "percent", args: ["x.y"], rateKey: "x.y" }] }),
+        "computed[0].args[0]",
+      ),
+    ).toBeUndefined();
+    expect(
+      errorAt(
+        pkg({ fields, computed: [{ key: "t", op: "percent", args: ["x.y"], rateKey: "x.y" }] }),
+        "computed[0].rateKey",
+      ),
+    ).toBeUndefined();
+  });
+
   it("accepts a computed chain whose args resolve to other computed keys", () => {
     const fields: PackageManifest["fields"] = [
       {

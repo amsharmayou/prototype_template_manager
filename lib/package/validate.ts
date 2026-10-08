@@ -45,6 +45,15 @@ const ASSET_ROLES = new Set(["bill-part", "image-placeholder"]);
 
 const COMPUTED_OPS = new Set(["sum", "sum-times", "add", "subtract", "multiply", "percent"]);
 
+/**
+ * The only two ops with a defined meaning for a repeat column: `sum` adds one
+ * across rows, `sum-times` multiplies two per row. A dotted arg on any other op
+ * is a request the evaluator cannot honour -- it reads args as whole names --
+ * so it is refused here, where the mistake is visible, rather than quietly
+ * computing zero where it is not.
+ */
+const COLUMN_OPS = new Set(["sum", "sum-times"]);
+
 /** Repeat field key -> the column names it declares. Resolution needs this map. */
 type RepeatColumns = Map<ManifestField["key"], NonNullable<ManifestField["columns"]>>;
 
@@ -143,6 +152,35 @@ function unresolved(
   }
 
   return "it is neither a declared field key nor the key of another computed entry";
+}
+
+/**
+ * Whether `name` resolves only as a repeat column, that is, not as a whole key.
+ *
+ * `unresolved` tries whole-name resolution first, so a field literally keyed
+ * `items.amount` is that field and not repeat `items` column `amount`. Refusing
+ * it here would contradict the order this module already documents and
+ * implements, and would reject a key the evaluator resolves correctly.
+ */
+function resolvesAsColumn(
+  name: string,
+  fieldKeys: ReadonlySet<ManifestField["key"]>,
+  computedKeys: ReadonlySet<ComputedSpec["key"]>,
+  repeats: Readonly<RepeatColumns>,
+): boolean {
+  if (fieldKeys.has(name) || computedKeys.has(name)) return false;
+  const path = splitPath(name);
+  if (!path) return false;
+  return repeats.get(path.head)?.includes(path.tail) === true;
+}
+
+/** Names the op and the reference, because a bare "not allowed" is not a diagnosis. */
+function columnArgMessage(op: string, name: string, label: string): string {
+  return (
+    `${label} ${name}: op "${op}" has no meaning for a repeat column; ` +
+    `only "sum" and "sum-times" read one. ` +
+    `Sum the column into a key of its own and combine that instead`
+  );
 }
 
 /** A computed entry as a graph node. `deps` are node references, not names. */
@@ -512,7 +550,15 @@ export function validateManifest(
         return;
       }
       const why = unresolved(a, fieldKeys, computedKeys, repeats);
-      if (why) out.push(issue(`computed[${i}].args[${j}]`, `arg ${why}`));
+      if (why) {
+        out.push(issue(`computed[${i}].args[${j}]`, `arg ${why}`));
+      } else if (
+        typeof c.op === "string" &&
+        !COLUMN_OPS.has(c.op) &&
+        resolvesAsColumn(a, fieldKeys, computedKeys, repeats)
+      ) {
+        out.push(issue(`computed[${i}].args[${j}]`, columnArgMessage(c.op, a, "arg")));
+      }
     });
     if (typeof c.rateKey !== "string" || c.rateKey.length === 0) return;
     if (c.rateKey === ownKey) {
@@ -525,7 +571,17 @@ export function validateManifest(
       return;
     }
     const why = unresolved(c.rateKey, fieldKeys, computedKeys, repeats);
-    if (why) out.push(issue(`computed[${i}].rateKey`, `rateKey ${why}`));
+    if (why) {
+      out.push(issue(`computed[${i}].rateKey`, `rateKey ${why}`));
+    } else if (
+      typeof c.op === "string" &&
+      !COLUMN_OPS.has(c.op) &&
+      resolvesAsColumn(c.rateKey, fieldKeys, computedKeys, repeats)
+    ) {
+      out.push(
+        issue(`computed[${i}].rateKey`, columnArgMessage(c.op, c.rateKey, "rateKey")),
+      );
+    }
   });
 
   reportComputedCycles(computed, computedKeys, out);
