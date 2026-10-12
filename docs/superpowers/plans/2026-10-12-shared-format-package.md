@@ -171,7 +171,8 @@ Create `Prototype/shared/billkit-format/index.ts`:
 export const PACKAGE_VERSION = 1 as const;
 ```
 
-Task 2 replaces this with the real barrel.
+Task 2 Step 3 rewrites this to re-export from the single real definition, so there is no second
+place where the format version is written down.
 
 - [ ] **Step 6: Write the failing smoke test**
 
@@ -259,10 +260,24 @@ data/
 .next/
 server/data/
 server/.env
+
+# Siblings of this repo, not part of it.
+# `version 1` is a separate git repository - ignoring it keeps `git add -A`
+# here from staging it as an embedded-repo gitlink.
+version 1/
+# An independent Gradle project with no repository of its own. Without this,
+# `git add -A` walks its build output and dies on path length.
+Android/
+# Demo fixtures for the editor's trace, not pipeline source.
+outputs/
 ```
 
 `server/.env` holds `BILLKIT_ADMIN_PASSWORD`. It must be uncommittable from the first commit, not
 added to the ignore list after someone has already pushed it.
+
+The last three entries are load-bearing, not tidiness. `git add -A` from `Prototype/` without them
+emits over a thousand adds of Android build output and then fails outright on a path-length error;
+with `version 1` ignored it cannot even be staged as a nested repository.
 
 - [ ] **Step 12: Commit — in both repositories**
 
@@ -408,7 +423,7 @@ Select-String -Path "shared\**\*.ts" -Pattern "@/lib/"
 ```
 Expected: **no matches**.
 
-- [ ] **Step 3: Create the package barrel**
+- [ ] **Step 3: Create the package barrel, and point the root barrel at it**
 
 Create `shared/billkit-format/package/index.ts`:
 ```ts
@@ -436,6 +451,23 @@ export { computedSpecsFor } from "./computedSpecs";
 ```
 
 Named exports, not `export *`: `manifest.json`'s consumer surface should be deliberate, and it keeps the `FieldType` collision structurally impossible.
+
+Then replace the root `shared/billkit-format/index.ts`, which Task 1 stubbed with a literal:
+
+```ts
+export { PACKAGE_VERSION } from "./package/format";
+```
+
+Without this the root entry point keeps its own hardcoded `1` while `package/format` owns the real
+value. Bump the format version and the two would silently disagree — a version number that lies is
+worse than one that is merely duplicated.
+
+Then prove every `exports` entry in `package.json` resolves, which the Task 1 smoke test could not:
+
+```bash
+npx.cmd tsx -e "for (const s of ['.','./package','./package/format','./template/types','./template/placeholders','./template/dataBinding','./render/sha256','./render/values']) await import('billkit-format' + s.slice(1)); console.log('all subpaths resolve')"
+```
+Expected: `all subpaths resolve`. A typo in one `exports` key would otherwise pass green until a consumer hit it.
 
 - [ ] **Step 4: Create the twelve shims**
 
