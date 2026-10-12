@@ -1268,8 +1268,13 @@ const sourcesIn = (root: string) =>
     .map((f) => ({ file: f, src: readFileSync(join(root, f), "utf8") }));
 
 describe("purity of lib/render", () => {
+  // `sha256.ts` and `values.ts` are one-line re-export shims over
+  // `billkit-format`; their real bodies are guarded by that package's own
+  // purity suite. Scanning a shim would pass while checking nothing.
   const dir = join(__dirname, "..", "lib", "render");
-  const sources = () => sourcesIn(dir);
+  const SHIMMED = new Set(["sha256.ts", "values.ts"]);
+  const sources = () =>
+    sourcesIn(dir).filter(({ file }) => !SHIMMED.has(file.split("\\").pop() ?? file.split("/").pop() ?? ""));
 
   it("imports no engine, no UI and nothing impure", () => {
     for (const { file, src } of sources()) {
