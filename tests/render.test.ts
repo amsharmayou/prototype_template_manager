@@ -1277,6 +1277,16 @@ describe("purity of lib/render", () => {
     sourcesIn(dir).filter(({ file }) => !SHIMMED.has(file.split("\\").pop() ?? file.split("/").pop() ?? ""));
 
   it("imports no engine, no UI and nothing impure", () => {
+    // Non-vacuity first, in this same test so the file count stays where it is.
+    // The filter above can be left matching nothing - a moved directory, a
+    // renamed shim - and the loop below would then pass while checking nothing.
+    const files = sources().map((s) => s.file);
+    expect({
+      scanned: files.length,
+      hasRendererBody: files.includes("primitives.ts"),
+    }).toEqual({ scanned: expect.any(Number), hasRendererBody: true });
+    expect(files.length).toBeGreaterThan(1);
+
     for (const { file, src } of sources()) {
       for (const re of BANNED) {
         expect(`${file}: ${re.source} ${re.test(src) ? "FOUND" : "ok"}`).toContain("ok");
