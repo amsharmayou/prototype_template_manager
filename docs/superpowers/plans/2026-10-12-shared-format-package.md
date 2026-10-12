@@ -25,20 +25,29 @@
 
 ### Task 1: Workspace root and shared package skeleton
 
-The highest-risk task in the plan, done alone on purpose: `version 1` contains a space and has no scope prefix, and a broken workspace root would invalidate Tasks 2-4. It ships no behaviour change.
+The highest-risk task in the plan, done alone on purpose. `version 1` contains a space and has no scope prefix, and a broken package layout would invalidate Tasks 2-4. It ships no behaviour change.
+
+**Two repositories, not one workspace.** The existing repo's root is `Prototype/version 1` — the editor
+itself — so nothing under `Prototype/` can be tracked from it. `shared/` and `server/` therefore live
+in a **second repository rooted at `Prototype/`**, and the editor consumes the format package through
+a `file:` dependency. `version 1` is never a workspace member, which keeps the editor's `allowScripts`
+field authoritative and leaves the existing repo, its remote, and its linked worktree untouched.
 
 **Files:**
-- Create: `Prototype/package.json`
 - Create: `Prototype/.gitignore`
+- Create: `Prototype/package.json` (workspace root for `shared/*` and `server` only)
 - Create: `Prototype/shared/billkit-format/package.json`
 - Create: `Prototype/shared/billkit-format/tsconfig.json`
 - Create: `Prototype/shared/billkit-format/vitest.config.ts`
 - Create: `Prototype/shared/billkit-format/index.ts`
 - Create: `Prototype/shared/billkit-format/tests/smoke.test.ts`
+- Modify: `version 1/package.json` — add the `billkit-format` `file:` dependency
+- Modify: `version 1/.gitignore` — ignore the installed copy of the linked package
 
 **Interfaces:**
 - Consumes: nothing (first task).
-- Produces: a resolvable `billkit-format` workspace package whose `index.ts` exports `PACKAGE_VERSION`. Tasks 2-4 add subpaths to it.
+- Produces: a `billkit-format` package resolvable from `version 1` by package name, whose `index.ts`
+  exports `PACKAGE_VERSION`. Tasks 2-4 add subpaths to it.
 
 - [ ] **Step 1: Record the baseline before touching anything**
 
@@ -51,16 +60,29 @@ npm.cmd test
 Expected: typecheck exit 0, lint clean, `Test Files 33 passed`, `Tests 634 passed`.
 Record the output in the task notes. If this is not green, stop — the baseline is already broken and this plan is not the cause.
 
-- [ ] **Step 2: Create the workspace root package.json**
+- [ ] **Step 2: Create the pipeline repo and its workspace root**
+
+`Prototype/` becomes a second git repository. It holds `shared/`, `server/`, and the pipeline docs
+that live beside them — and nothing from `version 1`.
+
+```bash
+cd "C:\Users\Lenovo\Desktop\Personal Project\Prototype"
+git init
+```
 
 Create `Prototype/package.json`:
 ```json
 {
-  "name": "billkit-prototype",
+  "name": "billkit-pipeline",
   "private": true,
-  "workspaces": ["shared/*", "version 1", "server"]
+  "workspaces": ["shared/*", "server"]
 }
 ```
+
+`"version 1"` is deliberately **absent**: it is a member of a different repository. Listing it would
+make npm hoist across repos and, worse, silently disable `allowScripts` — npm honours that field
+only at a workspace root, and dropping the editor to a non-root member cost it the approved install
+scripts for `canvas` (a native build).
 
 `server` does not exist yet. npm tolerates a workspace glob that matches nothing yet, and Plan 2 creates it.
 
@@ -166,25 +188,58 @@ describe("billkit-format", () => {
 });
 ```
 
-- [ ] **Step 7: Install at the root**
+- [ ] **Step 7: Install the pipeline workspace**
 
 Run from `Prototype`:
 ```bash
 npm.cmd install
 ```
-Expected: no `ERESOLVE`, no workspace errors. If this fails on the space in `version 1`, **stop and fall back** per the spec: drop the `"workspaces"` array, and in `version 1/package.json` add `"billkit-format": "file:../shared/billkit-format"`, then `npm.cmd install` again. Record which path you took.
+Expected: no `ERESOLVE`, no workspace errors. This installs `shared/*` only; `server` is added in Plan 2.
 
-- [ ] **Step 8: Verify the smoke test fails, then passes**
+- [ ] **Step 8: Link the package into the editor**
 
-Run from `Prototype/shared/billkit-format`:
+Add to `version 1/package.json` `dependencies`, alongside the existing entries:
+```json
+    "billkit-format": "file:../shared/billkit-format",
+```
+
+Then run from `Prototype\version 1`:
+```bash
+npm.cmd install
+```
+
+npm links a local `file:` directory rather than copying it, so `node_modules/billkit-format` is a
+symlink to `../shared/billkit-format`. That is what keeps the `.ts` entry points live for the
+shims in Task 2 and for Next's `transpilePackages` in Task 4 — a copy would go stale the moment
+either side changed.
+
+Confirm the link, and that it points outside this repo as intended:
+```bash
+(Get-Item node_modules\billkit-format).LinkType
+(Get-Item node_modules\billkit-format).Target
+```
+Expected: `LinkType` reports a link/junction and the target is the `shared/billkit-format` directory.
+If npm copied instead of linking, that is a real problem — report it rather than working around it.
+
+Add to `version 1/.gitignore`:
+```gitignore
+node_modules/billkit-format
+```
+The link points outside the repository; committing a symlink would break on every other clone.
+
+- [ ] **Step 9: Verify the shared package's own test passes**
+
+Run from `Prototype\shared\billkit-format`:
 ```bash
 npx.cmd vitest run
 ```
-Expected before the workspace link exists: FAIL resolving `billkit-format`. After a successful root install: `1 passed`.
+Expected: `1 passed`. This proves the package resolves by name in both repos, which is the single
+precondition Tasks 2-4 rest on.
 
-If it still cannot resolve, the fallback in Step 7 is the answer; do not proceed on a broken link.
+If it cannot resolve, the root install or the `file:` link is broken — report BLOCKED with both
+commands' output rather than proceeding on a broken link.
 
-- [ ] **Step 9: Confirm the editor is untouched by the new root**
+- [ ] **Step 10: Confirm the editor is untouched by the new link**
 
 Run from `Prototype\version 1`:
 ```bash
@@ -192,9 +247,10 @@ npm.cmd run typecheck
 npm.cmd run lint
 npm.cmd test
 ```
-Expected: **identical to the Step 1 baseline** — 634 passed. A workspace root must not perturb the app that already works.
+Expected: **identical to the Step 1 baseline** — 634 passed. Adding a dependency must not perturb
+the app that already works; if a test count moves, the install changed something it should not have.
 
-- [ ] **Step 10: Add the root .gitignore**
+- [ ] **Step 11: Add the pipeline repo's .gitignore**
 
 Create `Prototype/.gitignore`:
 ```gitignore
@@ -202,23 +258,48 @@ node_modules/
 data/
 .next/
 server/data/
+server/.env
 ```
 
-- [ ] **Step 11: Commit**
+`server/.env` holds `BILLKIT_ADMIN_PASSWORD`. It must be uncommittable from the first commit, not
+added to the ignore list after someone has already pushed it.
+
+- [ ] **Step 12: Commit — in both repositories**
+
+The pipeline repo first. From `Prototype`:
+```bash
+git add package.json .gitignore shared
+git commit -m "chore: start the pipeline repo with the billkit-format package"
+```
+
+Then the editor repo, which gained only the dependency and the ignore rule. From
+`Prototype\version 1`:
+```bash
+git add package.json .gitignore
+git commit -m "build: depend on the shared billkit-format package"
+```
+
+Stage **explicit paths**. This repo carries substantial pre-existing uncommitted work (the editor's
+`.btpkg` export, `lib/billkit/`, `tools/`, and more); `git add -A` here would sweep all of it into
+this commit. Verify with `git status` before committing that only those two files are staged.
+
+- [ ] **Step 13: Confirm the two repos are clean and distinct**
 
 ```bash
-git add Prototype/package.json Prototype/.gitignore Prototype/shared
-git commit -m "chore: add a workspace root and the billkit-format package skeleton"
+# from Prototype/
+git status --short
+# from Prototype/version 1/
+git status --short
 ```
+Expected: the pipeline repo reports only your own pre-existing untracked files; the editor repo
+still lists its pre-existing uncommitted work, unchanged from Step 1.
 
 ---
 
 ### Task 2: Move the format modules behind re-export shims
 
 **Files:**
-- Move (git mv): `version 1/lib/package/{format,build,parse,validate,resolve,form,computedSpecs}.ts` -> `shared/billkit-format/package/`
-- Move: `version 1/lib/template/{types,placeholders,dataBinding}.ts` -> `shared/billkit-format/template/`
-- Move: `version 1/lib/render/{sha256,values}.ts` -> `shared/billkit-format/render/`
+- Copy + delete: the 12 sources move from `version 1/lib/...` to `shared/billkit-format/...` (across repositories, so `git mv` cannot be used)
 - Create: `shared/billkit-format/package/index.ts`
 - Create: 12 shims at the original `version 1/lib/...` paths
 - Modify: the moved files' internal imports only
@@ -227,26 +308,42 @@ git commit -m "chore: add a workspace root and the billkit-format package skelet
 - Consumes: `billkit-format` package resolution from Task 1.
 - Produces: `billkit-format/package`, `billkit-format/template/types`, `billkit-format/template/placeholders`, `billkit-format/template/dataBinding`, `billkit-format/render/sha256`, `billkit-format/render/values`, each exporting **exactly** what it exported before the move.
 
-- [ ] **Step 1: Move the twelve files with history preserved**
+- [ ] **Step 1: Copy the twelve files across, then delete them from the editor repo**
 
-Run from `Prototype`:
+The destination is in a **different repository**, so `git mv` cannot do this — git will refuse any
+path outside its work tree. The move is therefore a copy into the pipeline repo plus a deletion
+recorded in the editor repo. That is not a downgrade: the content keeps its history in
+`version 1` up to the move commit, and lives in full in the pipeline repo from the copy commit on.
+
+From `Prototype\version 1`:
 ```bash
-cd version 1
-git mv lib/package/format.ts ../shared/billkit-format/package/format.ts
-git mv lib/package/build.ts ../shared/billkit-format/package/build.ts
-git mv lib/package/parse.ts ../shared/billkit-format/package/parse.ts
-git mv lib/package/validate.ts ../shared/billkit-format/package/validate.ts
-git mv lib/package/resolve.ts ../shared/billkit-format/package/resolve.ts
-git mv lib/package/form.ts ../shared/billkit-format/package/form.ts
-git mv lib/package/computedSpecs.ts ../shared/billkit-format/package/computedSpecs.ts
-git mv lib/template/types.ts ../shared/billkit-format/template/types.ts
-git mv lib/template/placeholders.ts ../shared/billkit-format/template/placeholders.ts
-git mv lib/template/dataBinding.ts ../shared/billkit-format/template/dataBinding.ts
-git mv lib/render/sha256.ts ../shared/billkit-format/render/sha256.ts
-git mv lib/render/values.ts ../shared/billkit-format/render/values.ts
+$files = @(
+  "lib/package/format.ts","lib/package/build.ts","lib/package/parse.ts",
+  "lib/package/validate.ts","lib/package/resolve.ts","lib/package/form.ts",
+  "lib/package/computedSpecs.ts",
+  "lib/template/types.ts","lib/template/placeholders.ts","lib/template/dataBinding.ts",
+  "lib/render/sha256.ts","lib/render/values.ts"
+)
+foreach ($f in $files) {
+  $dest = "../shared/billkit-format/$f"
+  New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+  Copy-Item $f $dest
+}
 ```
 
-`git mv` rather than delete-and-add, so the diff shows a rename and reviewers can see the content is unchanged.
+Then confirm twelve files landed and the byte counts match before deleting anything:
+```bash
+Get-ChildItem "..\shared\billkit-format" -Recurse -Filter *.ts | Select-Object FullName, Length
+```
+
+Only once that check passes, record the deletion in the editor repo:
+```bash
+git rm lib/package/format.ts lib/package/build.ts lib/package/parse.ts lib/package/validate.ts lib/package/resolve.ts lib/package/form.ts lib/package/computedSpecs.ts lib/template/types.ts lib/template/placeholders.ts lib/template/dataBinding.ts lib/render/sha256.ts lib/render/values.ts
+```
+
+Note `lib/package/computedSpecs.ts` is currently **untracked** (it has never been committed). `git rm`
+will refuse it — delete it with `Remove-Item` instead, and expect the editor repo's diff to show
+eleven deletions rather than twelve.
 
 - [ ] **Step 2: Rewrite the moved files' internal imports to relative paths**
 
@@ -365,16 +462,35 @@ Expected: **634 passed, 33 files** — identical to baseline. If a test fails, a
 - [ ] **Step 6: Confirm no importer was edited**
 
 ```bash
-git diff --name-only HEAD~1
+git status --short
 ```
-Expected: only the 12 moved files, the 12 shims, and `package/index.ts`. **Any other file appearing here violates the plan's central constraint** — revert it and fix the export instead.
+Expected, in the **editor** repo: only the 12 deletions, the 12 shims, and the one untracked
+`computedSpecs.ts` deletion. **Any file appearing here that is not one of the 24 violates the
+plan's central constraint** — revert it and fix the export instead.
 
-- [ ] **Step 7: Commit**
-
+Then confirm the same in the **pipeline** repo, where the copies and the barrel live:
 ```bash
-git add -A
-git commit -m "refactor: move the package format into billkit-format behind shims"
+cd ..\shared\billkit-format
+git status --short ..
 ```
+Expected: the 12 copied files plus `package/index.ts`, and nothing else.
+
+- [ ] **Step 7: Commit — pipeline repo first, then the editor repo**
+
+From `Prototype` (pipeline repo):
+```bash
+git add shared/billkit-format
+git commit -m "feat: carry the package format implementation"
+```
+
+From `Prototype\version 1` (editor repo):
+```bash
+git add lib/package lib/template lib/render
+git commit -m "refactor: consume the format from billkit-format behind shims"
+```
+
+**Never `git add -A` in either repo.** This repository carries substantial pre-existing uncommitted
+work that this plan must not absorb into its commits.
 
 ---
 
@@ -495,12 +611,21 @@ npx.cmd vitest run
 ```
 Expected: editor 634 passed; shared 2 passed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Commit — both repositories**
 
+From `Prototype` (pipeline repo — the new purity suite lives here):
 ```bash
-git add -A
+git add shared/billkit-format
 git commit -m "test: guard purity on the shared package's own sources"
 ```
+
+From `Prototype\version 1` (editor repo — the repointed scan lives here):
+```bash
+git add tests/render.test.ts
+git commit -m "test: stop the render purity scan reading shims as sources"
+```
+
+Explicit paths only, in both repos.
 
 ---
 
@@ -569,21 +694,35 @@ npm.cmd run build
 ```
 Expected: all four clean; `Test Files 33 passed`, `Tests 634 passed`.
 
-- [ ] **Step 7: Confirm the Android side is still untouched**
+- [ ] **Step 7: Confirm only the generated Android assets changed**
 
-The Android project is an independent tree and is not in the workspace. Verify nothing there changed:
+The Android project is **not a git repository** and is not in either workspace, so `git status`
+there would find no repo and fail. Check it directly instead:
+
 ```bash
-cd ..\Android
-git status --short
+Get-ChildItem "..\Android\app\src\main\assets" | Select-Object Name, Length, LastWriteTime
 ```
-Expected: no output, or only changes that predate this plan. This plan must not modify the Android project at all — Plan 3 does that.
+Expected: exactly `billkit.js` (~27201 bytes) and `sample.btpkg`, both freshly written — which is
+correct, because Step 5 regenerates them on purpose. Nothing else under `..\Android` should have
+a modification time from today.
+
+```bash
+Get-ChildItem "..\Android" -Recurse -File -Include *.kt,*.kts,*.xml |
+  Where-Object { $_.LastWriteTime -gt (Get-Date).Date }
+```
+Expected: **no output**. No Kotlin, Gradle or manifest file may be touched by this plan; Plan 3
+is the only plan that modifies Android.
 
 - [ ] **Step 8: Commit**
 
+From `Prototype\version 1` (the only repo this task changes):
 ```bash
-git add -A
+git add next.config.ts
 git commit -m "build: transpile the shared format package in Next"
 ```
+
+Explicit paths only — this repository carries pre-existing uncommitted work that this plan must not
+absorb.
 
 ---
 
