@@ -12,6 +12,13 @@
 
 ## Global Constraints
 
+- **The catalog `id` is a pure function of content, or none of this works.** `writePackage` now
+  pins `mtime` to the ZIP epoch, so two writes of one template are byte-equal. **One known
+  exception survives**, carried from Plan 1 and tracked by a deliberately-failing test at
+  `shared/billkit-format/tests/determinism.test.ts` (`it.fails`, verified non-vacuous):
+  `meta.modifiedAt` still reaches the archive bytes, because `build.ts` serialises the whole
+  template into `template.json`. **Task 1 of this plan removes it.** Until then, a `.btpkg` is
+  not a pure function of its template and the de-duplication guarantee is not yet real.
 - **Express 5 semantics.** `req.params` is populated synchronously, but path-to-regexp v8 rejects bare `*` wildcards. Do not write `app.get("/x/*", ...)`.
 - **The backend never builds a package.** `parsePackage` → `validatePackage` → describe. Building is the editor's job.
 - **Only `error`-severity issues refuse an upload.** Warnings are recorded and the package is kept.
@@ -22,6 +29,76 @@
 - **No `git push`.** Never commit `node_modules/` or `server/data/`.
 - Server gate: `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd test`.
 - Tests hit a **real HTTP server on an ephemeral port** using global `fetch` — no `supertest` dependency, and the assertions cover actual status codes and headers.
+
+---
+
+### Task 0: Make the archive a pure function of the template
+
+Do this **first**. The whole storage design rests on it, and it is a one-line change plus one
+assertion flip. Doing it later means writing the store against an id that is not yet the content
+hash, and discovering the defect from a duplicate row instead of from a test.
+
+**Files:**
+- Modify: `Prototype/shared/billkit-format/package/build.ts`
+- Modify: `Prototype/shared/billkit-format/tests/determinism.test.ts`
+
+**Interfaces:**
+- Consumes: `writePackage` with `mtime` already pinned to `315532800000` (Plan 1).
+- Produces: a `.btpkg` whose bytes depend only on its template, which is what makes
+  `id = sha256(bytes)` a usable primary key.
+
+- [ ] **Step 1: Write the failing test first**
+
+In `determinism.test.ts` there is a deliberately-failing case (`it.fails`) asserting that two
+builds differing only in `meta.modifiedAt` produce identical bytes. Confirm it is still failing and
+still marked `it.fails` — that is the whole point of it, and it goes red the moment someone fixes
+the behaviour.
+
+- [ ] **Step 2: Stop `modifiedAt` reaching the archive**
+
+In `build.ts`, where `template.json` is produced:
+
+```ts
+const templateJson = JSON.stringify({ ...template, objects }, null, 2);
+```
+
+`meta.modifiedAt` is editor bookkeeping — the renderer already excludes it from its output hash
+for the same reason, at `version 1/lib/render/index.ts:174`. Serialise it as an empty string so
+the field keeps its type and loses its variance:
+
+```ts
+const templateJson = JSON.stringify(
+  { ...template, meta: { ...template.meta, modifiedAt: "" }, objects },
+  null,
+  2,
+);
+```
+
+- [ ] **Step 3: Flip the sentinel**
+
+Change `it.fails(...)` to `it(...)`. Run `npm.cmd test` from `shared/billkit-format`.
+Expected: green, with the case now asserting the invariant directly.
+
+- [ ] **Step 4: Prove the editor is unaffected**
+
+From `Prototype\version 1`: `npm.cmd run typecheck`, `npm.cmd run lint`, `npm.cmd test`, then
+`npm.cmd run build:billkit` and `npm.cmd run prepare:android-assets`.
+Expect **634 tests / 33 files**, and `public/billkit.js` byte-identical — `buildPackage` is not in
+that bundle's dependency graph, so nothing about it should move.
+
+- [ ] **Step 5: Prove the hash is now a function of content**
+
+From `Prototype\server`, after Task 2 exists: build the same template twice through
+`buildPackageBytes` and assert one id. Until then, a unit assertion in `determinism.test.ts`
+comparing two `writePackage` results across differing `modifiedAt` values is sufficient.
+
+- [ ] **Step 6: Commit**
+
+In the pipeline repo, explicit paths:
+```bash
+git add shared/billkit-format/package/build.ts shared/billkit-format/tests/determinism.test.ts
+git commit -m "fix: stop a wall-clock timestamp from varying the package bytes"
+```
 
 ---
 
