@@ -16,6 +16,8 @@ const eslintConfig = [
       "next-env.d.ts",
       // Built artifact, not source: `npm run build:share` regenerates it.
       "public/sharekit.js",
+      // Same, for the host runtime `npm run build:billkit` regenerates.
+      "public/billkit.js",
     ],
   },
 ];

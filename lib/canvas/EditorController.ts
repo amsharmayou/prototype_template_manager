@@ -74,7 +74,7 @@ import { serialiseObjects, defaultName } from "@/lib/template/serialize";
 import { buildPackage, writePackage } from "@/lib/package/build";
 import { parsePackage } from "@/lib/package/parse";
 import { resolvePackage } from "@/lib/package/resolve";
-import type { ComputedSpec } from "@/lib/package/format";
+import { computedSpecsFor } from "@/lib/package/computedSpecs";
 import { renderHtml } from "@/lib/render";
 import type {
   BillTemplate,
@@ -219,25 +219,6 @@ type Listener = () => void;
   hr: "hr",
   vr: "vr",
 };
-
-/**
- * The totals a band's trailing row reads: the amount column of every repeat,
- * summed, then added into one total.
- *
- * Both the app and the E2E suite derive their figures from this, so a spec the
- * test asserts on is the same one the render page would evaluate.
- */
-function computedSpecsFor(t: BillTemplate): ComputedSpec[] {
-  const specs: ComputedSpec[] = t.objects
-    .flatMap((o) => (o.type === "table" && o.repeat ? [o] : []))
-    .map((o) => ({
-      key: "subtotal",
-      op: "sum" as const,
-      args: [`${(o as { repeat: { key: string } }).repeat.key}.amount`],
-    }));
-  specs.push({ key: "total", op: "add", args: ["subtotal"] });
-  return specs;
-}
 
 /** Snap a value to the nearest grid multiple. */
 export function snap(value: number, size: number): number {

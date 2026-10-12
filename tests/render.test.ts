@@ -1242,31 +1242,38 @@ it("keeps a negative x and y, which are positions and not lengths", () => {
   expect(r.list()).toHaveLength(0);
 });
 
+/**
+ * Nothing either module may reach for, so they survive a host that has no
+ * engine, no UI and no DOM. `lib/billkit` shares this list because a host
+ * runtime that touches any of them is a runtime that only works in a browser.
+ */
+const BANNED = [
+  /from ["']fabric["']/,
+  /from ["']react/,
+  /from ["']next\//,
+  /lib\/canvas/,
+  /\bDate\b/,
+  /Math\.random/,
+  /\bIntl\b/,
+  /toLocaleString/,
+  /\bcrypto\b/,
+  /\bfetch\b/,
+  /document\./,
+  /window\./,
+];
+
+const sourcesIn = (root: string) =>
+  readdirSync(root, { recursive: true, encoding: "utf8" })
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => ({ file: f, src: readFileSync(join(root, f), "utf8") }));
+
 describe("purity of lib/render", () => {
   const dir = join(__dirname, "..", "lib", "render");
-  const sourcesIn = (root: string) =>
-    readdirSync(root, { recursive: true, encoding: "utf8" })
-      .filter((f) => f.endsWith(".ts"))
-      .map((f) => ({ file: f, src: readFileSync(join(root, f), "utf8") }));
   const sources = () => sourcesIn(dir);
 
   it("imports no engine, no UI and nothing impure", () => {
-    const banned = [
-      /from ["']fabric["']/,
-      /from ["']react/,
-      /from ["']next\//,
-      /lib\/canvas/,
-      /\bDate\b/,
-      /Math\.random/,
-      /\bIntl\b/,
-      /toLocaleString/,
-      /\bcrypto\b/,
-      /\bfetch\b/,
-      /document\./,
-      /window\./,
-    ];
     for (const { file, src } of sources()) {
-      for (const re of banned) {
+      for (const re of BANNED) {
         expect(`${file}: ${re.source} ${re.test(src) ? "FOUND" : "ok"}`).toContain("ok");
       }
     }
@@ -1303,6 +1310,29 @@ describe("purity of lib/render", () => {
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("purity of lib/billkit", () => {
+  const dir = join(__dirname, "..", "lib", "billkit");
+  /**
+   * `main.ts` is the one file allowed to touch `window`: it is the platform
+   * shim that hangs the bridge on the host's global. Everything a host actually
+   * calls — the bridge — is held to the same standard as the renderer, because
+   * an impure bridge is a bundle that only runs in a browser.
+   */
+  const sources = () => sourcesIn(dir).filter((s) => s.file !== "main.ts");
+
+  it("scans more than the platform shim", () => {
+    expect(sources().map((s) => s.file)).toContain("bridge.ts");
+  });
+
+  it("imports no engine, no UI and nothing impure", () => {
+    for (const { file, src } of sources()) {
+      for (const re of BANNED) {
+        expect(`${file}: ${re.source} ${re.test(src) ? "FOUND" : "ok"}`).toContain("ok");
+      }
     }
   });
 });describe("renderObject wrapped text", () => {

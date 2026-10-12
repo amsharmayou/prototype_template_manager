@@ -6,13 +6,17 @@ import { Button } from "@/components/ui/Controls";
 import { downloadJson, downloadText, safeFilename } from "@/lib/export/download";
 import { exportDocx } from "@/lib/export/toDocx";
 import { exportPdf } from "@/lib/export/toPdf";
+import { exportPackage } from "@/lib/export/toPackage";
 import { exportJson, exportPng, exportSvg } from "@/lib/export/toSvg";
 import { renderHtml } from "@/lib/render";
 import type { EditorController } from "@/lib/canvas/EditorController";
 
-type ExportItem = "json" | "svg" | "pdf" | "docx" | "png" | "html";
+type ExportItem = "json" | "svg" | "pdf" | "docx" | "png" | "html" | "btpkg";
 
 const ITEMS: Array<{ id: ExportItem; label: string; hint: string }> = [
+  // First, because it is the only one a host application can open. Everything
+  // below it is for a person reading the bill, not for the app that fills it.
+  { id: "btpkg", label: "Bill Package (.btpkg)", hint: "For a host app to open" },
   { id: "json", label: "JSON Template", hint: "Reusable template format" },
   { id: "svg", label: "SVG", hint: "Vector structure" },
   { id: "pdf", label: "PDF", hint: "Document sized page" },
@@ -41,6 +45,7 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
     setError(null);
     try {
       const template = controller.getTemplate();
+      if (item === "btpkg") exportPackage(template);
       if (item === "json") exportJson(template);
       if (item === "svg") await exportSvg(template);
       if (item === "pdf") await exportPdf(template);
