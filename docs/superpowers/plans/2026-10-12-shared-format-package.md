@@ -340,7 +340,11 @@ $files = @(
   "lib/render/sha256.ts","lib/render/values.ts"
 )
 foreach ($f in $files) {
-  $dest = "../shared/billkit-format/$f"
+  # Strip the leading `lib/`: the `exports` map addresses these as
+  # `billkit-format/package/format`, `billkit-format/template/types` and so on,
+  # NOT `billkit-format/lib/package/format`. Copying the source paths verbatim
+  # produces a tree the package cannot resolve.
+  $dest = "../shared/billkit-format/" + ($f -replace '^lib/', '')
   New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
   Copy-Item $f $dest
 }
@@ -356,9 +360,8 @@ Only once that check passes, record the deletion in the editor repo:
 git rm lib/package/format.ts lib/package/build.ts lib/package/parse.ts lib/package/validate.ts lib/package/resolve.ts lib/package/form.ts lib/package/computedSpecs.ts lib/template/types.ts lib/template/placeholders.ts lib/template/dataBinding.ts lib/render/sha256.ts lib/render/values.ts
 ```
 
-Note `lib/package/computedSpecs.ts` is currently **untracked** (it has never been committed). `git rm`
-will refuse it — delete it with `Remove-Item` instead, and expect the editor repo's diff to show
-eleven deletions rather than twelve.
+Note `lib/package/computedSpecs.ts` was **untracked** when this plan was written; Task 1 committed it
+along with the rest of the `.btpkg` export work, so `git rm` now succeeds on all twelve.
 
 - [ ] **Step 2: Rewrite the moved files' internal imports to relative paths**
 
