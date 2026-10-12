@@ -130,11 +130,44 @@ The move is safe because the code is already dependency-light: its imports are r
 source files as text and asserts they match none of the banned patterns. It moves to the
 shared package's own test suite and keeps guarding.
 
-**Cost, stated plainly.** This is the largest and least interesting piece of the work. The
-editor's imports, `tsconfig.json` paths, `vitest.config.ts` alias, and eslint config all need
-updating; `npm install` behaviour changes under a workspace root; and every existing test that
-imports `@/lib/package/*` needs its path rewritten. It buys correctness for steps 2-5, and it
-is the reason those steps are small.
+**Cost, measured rather than guessed.** The importer count of each moving file:
+
+| Module | Files importing it |
+|---|---|
+| `lib/template/types` | **52** |
+| `lib/template/placeholders` | 8 |
+| `lib/template/dataBinding` | 7 |
+| `lib/render/sha256` | 5 |
+| `lib/render/values` | 2 |
+
+`lib/template/types` alone reaches into every canvas object, every export format, the share
+kit, the renderer and most tests. Rewriting those 52 imports by hand is a large, high-regression
+edit to a suite that currently passes 634 tests.
+
+**So nothing's imports change.** The editor keeps its `@/lib/...` paths; each moved module is
+replaced in place by a one-line re-export shim:
+
+```ts
+// version 1/lib/template/types.ts  (after)
+export * from "billkit-format/template/types";
+```
+
+A shim is not a second copy - it has no body to drift - so there is still exactly one
+implementation, and it is the one the backend imports. The edit surface is the 12 moved files
+plus 12 shims, all mechanical, with the existing green gate proving nothing broke. The 52
+`@/lib/template/types` importers are untouched.
+
+### The trap a shim introduces
+
+`tests/render.test.ts` asserts purity by **reading source text** from a hardcoded directory:
+`describe("purity of lib/render")` scans `join(__dirname, "..", "lib", "render")`. Once
+`values.ts` and `sha256.ts` are shims, that scan keeps passing while no longer reading the
+code it was written to protect - a silent loss of coverage on the exact guarantee this whole
+design rests on.
+
+The shared package therefore carries its own purity suite that scans **its own real sources**,
+and the editor's existing scan is repointed so it stops pretending to cover files that have
+moved. Green must mean checked, not merely unexamined.
 
 ### Workspace root
 
@@ -143,8 +176,9 @@ declare `"billkit-format": "*"`.
 
 > **Risk.** `version 1` contains a space and does not begin with a scope character. Verify a
 > clean `npm install` and a green web gate at the *root* before building anything on top of
-> this. If the workspace root proves hostile, fall back to a relative `file:` dependency from
-> each app and keep the shared directory where it is; the rest of this spec is unaffected.
+> this. If the workspace root proves hostile, fall back to a `file:` dependency declared by
+> each app, keeping the shared directory where it is; the shims above are what make this
+> fallback cheap - only the 12 shims' import specifier changes, not the workspace layout.
 
 ## Backend
 
@@ -350,7 +384,7 @@ this is the one that says the three languages agree.
 | Risk | Mitigation |
 |---|---|
 | Workspace root with a space in `version 1` | verify clean install + green web gate at `Prototype/` **first**; `file:` fallback documented above |
-| Moving `lib/package` breaks ~15 test files and all editor imports | do it as its own isolated step with a green gate before anything else starts |
+| Moving `lib/package` breaks ~15 test files and all editor imports | the shim design means **no importer changes at all**; the 634-test gate proves it |
 | `node:sqlite` is still flagged experimental in Node 24 | it is stable in practice and needs no native build; if it is unavailable, `better-sqlite3` is a drop-in behind the same repository interface |
 | Emulator cannot reach the dev backend | cleartext is debug-only and host-allowlisted; on failure check `adb reverse tcp:4000 tcp:4000` |
 | Cleartext config accidentally shipped | it lives in `src/debug/` only; release has no reference to it at all |
