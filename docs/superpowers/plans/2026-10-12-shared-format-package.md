@@ -551,11 +551,25 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-const BANNED = [
+/**
+ * Patterns that are already true of CODE, so they match against raw source.
+ * An import specifier lives inside a string literal by nature - stripping
+ * strings would hide exactly what these are written to catch.
+ */
+const BANNED_IN_CODE = [
   /from ["']fabric["']/,
   /from ["']react/,
   /from ["']next\//,
   /lib\/canvas/,
+];
+
+/**
+ * Patterns that must not appear in CODE, and would false-positive on prose.
+ * `document.` ends sentences in ordinary JSDoc; `fetch` appears in explanatory
+ * comments. Matching the raw text for those makes the guard cry wolf, and a
+ * guard that cries wolf gets ignored.
+ */
+const BANNED_AT_RUNTIME = [
   /\bDate\b/,
   /Math\.random/,
   /\bIntl\b/,
@@ -566,29 +580,82 @@ const BANNED = [
   /window\./,
 ];
 
+/** Drop comments and string bodies, keeping the surrounding code shape. */
+function code(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, " ")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1")
+    .replace(/`(?:\\.|[^`\\])*`/g, '""')
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/'(?:\\.|[^'\\])*'/g, '""');
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 const sources = () =>
   readdirSync(root, { recursive: true, encoding: "utf8" })
-    .filter((f) => f.endsWith(".ts") && !f.startsWith("tests" + "/"))
+    .map((f) => f.replace(/\\/g, "/")) // Windows separators, or this misses everything
+    .filter((f) => f.endsWith(".ts") && !f.startsWith("tests/"))
     .map((f) => ({ file: f, src: readFileSync(join(root, f), "utf8") }));
 
 describe("purity of billkit-format", () => {
-  it("is not empty", () => {
-    expect(sources().length).toBeGreaterThan(1);
+  it("scans more than one real source file", () => {
+    // Without this, an empty or mis-pointed root makes every assertion below
+    // pass vacuously. That is the exact failure this whole task exists to
+    // prevent, so it is asserted first and on its own.
+    expect(sources().length).toBeGreaterThan(5);
   });
 
-  it("imports no engine, no UI and nothing impure", () => {
+  it("imports no engine and no UI", () => {
     for (const { file, src } of sources()) {
-      for (const re of BANNED) {
+      for (const re of BANNED_IN_CODE) {
         expect(`${file}: ${re.source} ${re.test(src) ? "FOUND" : "ok"}`).toContain("ok");
+      }
+    }
+  });
+
+  it("touches no impure runtime global", () => {
+    for (const { file, src } of sources()) {
+      const body = code(src);
+      for (const re of BANNED_AT_RUNTIME) {
+        expect(`${file}: ${re.source} ${re.test(body) ? "FOUND" : "ok"}`).toContain("ok");
       }
     }
   });
 });
 ```
 
-The `is not empty` test is the one that makes this suite trustworthy — without it, an empty or mis-pointed root makes the scan vacuously pass, which is the exact failure mode this task exists to prevent.
+Two things this corrects, both found by the implementer running it:
+
+`f.startsWith("tests" + "/")` never matched `tests\purity.test.ts` on Windows, so the suite
+scanned **its own `BANNED` array** and reported `toLocaleString FOUND`. A guard that inspects its
+own source is not a guard.
+
+And raw-text matching false-positives on prose — `document.` at the end of a JSDoc sentence,
+`fetch` in a comment — which is how the guard reports failure for code that is perfectly pure.
+
+- [ ] **Step 1b: Remove the wall-clock stamp that makes the guard red on arrival**
+
+`shared/billkit-format/template/types.ts:364` reads `meta: { name, modifiedAt: new Date().toISOString() }`
+inside `emptyTemplate()`. That is a real hit, not a false positive, and it is worth removing rather
+than exempting: a helper that stamps the current time makes every fresh template differ.
+
+Change that line to:
+```ts
+    meta: { name, modifiedAt: "" },
+```
+
+Nothing reads `modifiedAt`. The editor stamps it on save from `lib/template/serialize.ts`, which did
+**not** move and stays in the editor. This is one line and touches none of `emptyTemplate`'s eight
+call sites.
+
+> **Separate, larger finding — do not fix it here.** Because `build.ts` serialises the whole
+> template into `template.json`, `modifiedAt` reaches the archive bytes and therefore the
+> content-addressed id Plan 2 stores by. Two builds of the same bill can differ. The project already
+> excludes `modifiedAt` from the *render* hash for exactly this reason (`lib/render/index.ts:174`,
+> with a regression test at `tests/render.test.ts:1047`); `buildPackage` has no equivalent rule.
+> That belongs to Plan 2, where the content-addressed store can test it. Fixing it here would change
+> round-trip semantics with nothing to catch the change.
 
 - [ ] **Step 2: Prove the guard actually fails**
 
