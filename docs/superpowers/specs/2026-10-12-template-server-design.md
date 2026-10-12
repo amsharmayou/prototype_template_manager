@@ -26,7 +26,8 @@ Three gaps stand in the way:
 
 ## Goals
 
-- A standalone Next.js service that **ingests, validates, stores and serves** `.btpkg` files.
+- A standalone **Express + Node** service that **ingests, validates, stores and serves**
+  `.btpkg` files, deployable and restartable independently of the editor.
 - An admin dashboard where an author uploads a package and sees exactly why an upload was
   refused when it is refused.
 - An Android **Templates screen** that lists what the server offers, downloads on demand,
@@ -59,9 +60,9 @@ workspace package so the editor and the new backend read it from one implementat
 ## Architecture
 
 ```
-Prototype/                    NEW npm workspace root
+Prototype/                    npm workspace root
 ├── version 1/      EDITOR     ─┐
-├── server/         BACKEND + DASHBOARD ──┤ depends on ──┐
+├── server/         EXPRESS API + DASHBOARD ──┤ depends on ──┐
 │                                            │            │
 ├── shared/         billkit-format ─────────┴────────────┤
 │                  (.btpkg wire format)                   │
@@ -182,8 +183,15 @@ declare `"billkit-format": "*"`.
 
 ## Backend
 
-A separate Next.js 16 App Router application at `Prototype/server/`, deployed independently
-of the editor. Node.js runtime (the default; nothing here needs Edge).
+A standalone **Express 5 + Node** service at `Prototype/server/`, deployed independently of
+the editor and sharing no runtime with it. It is plain TypeScript run through `tsx`; there is
+no framework, no bundler and no build step for the service itself.
+
+Express was chosen over embedding route handlers in the editor's Next.js app because the
+service must be deployable and restartable on its own, with its own process, its own port and
+its own lifecycle. Coupling its uptime to the editor's build was the thing to avoid.
+
+Routes are plain Express middleware; the HTTP contract below is unchanged by the framework.
 
 ### Storage
 
@@ -267,11 +275,13 @@ archive and the handler converts that into an issue rather than letting it escap
 
 ### Dashboard
 
-At `/admin`. It matches the editor's existing visual language - Tailwind v4, the `neutral`
-palette with `blue-600` as the single accent, dense 10-11px type - rather than introducing a
-new one. The primitives live in a small `components/ui.tsx` inside the server app. The class
-strings are duplicated on purpose: the format package stays UI-free, and ~100 lines of
-Tailwind is cheaper than coupling a wire-format library to React.
+At `/admin`, served as server-rendered HTML from the same Express process. The React and
+Tailwind pipelines belong to the editor; rebuilding either here would mean a second frontend
+build to keep in step for what is an operator tool. So the pages are template literals with
+one hand-written stylesheet, `server/public/admin.css`, that deliberately mirrors the editor's
+tokens: the `neutral` palette, `blue-600` as the single accent, dense 10-11px type. It is
+~120 lines, needs no build, no CDN and no network at runtime, and can be swapped for Tailwind
+later at the cost of that one file.
 
 - **Catalog** - name, size, page, field count, uploaded-at; download, edit, delete.
 - **Upload** - drag-drop or picker. Success shows the manifest summary; a `422` lists every
@@ -386,7 +396,7 @@ this is the one that says the three languages agree.
 | Workspace root with a space in `version 1` | verify clean install + green web gate at `Prototype/` **first**; `file:` fallback documented above |
 | Moving `lib/package` breaks ~15 test files and all editor imports | the shim design means **no importer changes at all**; the 634-test gate proves it |
 | `node:sqlite` is still flagged experimental in Node 24 | it is stable in practice and needs no native build; if it is unavailable, `better-sqlite3` is a drop-in behind the same repository interface |
-| Emulator cannot reach the dev backend | cleartext is debug-only and host-allowlisted; on failure check `adb reverse tcp:4000 tcp:4000` |
+| Emulator cannot reach the dev backend | the server binds `0.0.0.0` so the emulator reaches it over the LAN at `10.0.2.2`; if that fails, `adb reverse tcp:4000 tcp:4000` |
 | Cleartext config accidentally shipped | it lives in `src/debug/` only; release has no reference to it at all |
 
 ## Out of scope
