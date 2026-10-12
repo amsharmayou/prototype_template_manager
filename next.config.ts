@@ -22,10 +22,9 @@ const nextConfig: NextConfig = {
    * `billkit-format` is installed as a junction into node_modules, but its real
    * files live one level up in ../shared/billkit-format. Turbopack will not
    * follow a package out of its own root, so the root is widened to the parent
-   * directory. This is the change the build actually requires; transpilePackages
-   * above is the conventional belt-and-braces wiring for a raw-TypeScript
-   * package. Without turbopack.root the build fails with 74x
-   * "Module not found: Can't resolve 'billkit-format/package/...'".
+   * directory. This is the change the build actually requires: removing it
+   * fails the build with "Module not found: Can't resolve
+   * 'billkit-format/package/...'", repeated across import sites.
    */
   turbopack: {
     root: path.join(__dirname, ".."),
