@@ -131,10 +131,162 @@ describe("collisions", () => {
   });
 });
 
-// Declared here rather than inside the `it` above: a `describe` nested in a
-// running test body registers none of its own cases, so the three validations
-// below - unknown parent, parent cycle, contradictory anchor/collision - were
-// written but never executed.
+/* 9.4 */ describe("container padding and size limits", () => {
+  const frame = (policy: Record<string, unknown>) => rect("frame", 100, 40, 200, 120, { container: policy });
+
+  it("leaves room for the configured padding on every side", () => {
+    const out = run({
+      objects: [
+        frame({ enabled: true, padding: { top: 4, right: 20, bottom: 4, left: 8 } }),
+        text("t1", 108, 44, 100, 20, { layoutParentId: "frame", expansion: { x: { mode: "unbounded" }, y: { mode: "unbounded" } } }),
+      ],
+      measurements: { t1: needs(300, 120) },
+    });
+
+    // Child bottom 44 + 120 = 164, plus 4px of padding.
+    expect(boxOf(out.objects, "frame").height).toBeCloseTo(128, 5);
+    // Child right 108 + 300 = 408, plus 20px of padding.
+    expect(boxOf(out.objects, "frame").width).toBeCloseTo(328, 5);
+  });
+
+  it("never shrinks below the configured minimum size", () => {
+    const out = run({
+      objects: [
+        frame({ enabled: true, minWidth: 260, minHeight: 180 }),
+        text("t1", 108, 44, 20, 20, { layoutParentId: "frame" }),
+      ],
+    });
+
+    expect(boxOf(out.objects, "frame").width).toBe(260);
+    expect(boxOf(out.objects, "frame").height).toBe(180);
+  });
+
+  it("stops at the configured maximum size and reports nothing else", () => {
+    const out = run({
+      objects: [
+        frame({ enabled: true, maxWidth: 240, maxHeight: 200 }),
+        text("t1", 108, 44, 100, 20, { layoutParentId: "frame", expansion: { x: { mode: "unbounded" }, y: { mode: "unbounded" } } }),
+      ],
+      measurements: { t1: needs(400, 300) },
+    });
+
+    expect(boxOf(out.objects, "frame").width).toBe(240);
+    expect(boxOf(out.objects, "frame").height).toBe(200);
+    // The container was told to stop, so the content no longer fits it.
+    expect(out.diagnostics.join(" ")).toContain("t1");
+  });
+
+  it("never grows past the maximum, and reports that the content did not fit", () => {
+    const out = run({
+      objects: [
+        frame({ enabled: true, maxWidth: 240, maxHeight: 200, padding: { top: 0, right: 0, bottom: 0, left: 0 } }),
+        text("t1", 108, 44, 100, 20, { layoutParentId: "frame", expansion: { x: { mode: "unbounded" }, y: { mode: "unbounded" } } }),
+      ],
+      measurements: { t1: needs(400, 300) },
+    });
+
+    expect(boxOf(out.objects, "frame").width).toBeLessThanOrEqual(240);
+    expect(boxOf(out.objects, "frame").height).toBeLessThanOrEqual(200);
+  });
+});
+
+/* 9.5, 14.2 */ describe("anchors on both axes", () => {
+  const panel = () =>
+    rect("panel", 100, 40, 200, 120, {
+      container: { enabled: true, growthX: "content", growthY: "content" },
+    });
+
+  it("stretch keeps the insets the author drew, and reports a field growing into it", () => {
+    const out = run({
+      objects: [
+        panel(),
+        text("t1", 110, 50, 100, 20, { layoutParentId: "panel", expansion: { x: { mode: "unbounded" }, y: { mode: "unbounded" } } }),
+        rect("band", 110, 70, 180, 40, {
+          layoutParentId: "panel",
+          anchor: { vertical: "stretch", horizontal: "stretch" },
+        }),
+      ],
+      measurements: { t1: needs(100, 120) },
+    });
+
+    const p = boxOf(out.objects, "panel");
+    const band = boxOf(out.objects, "band");
+    // The band was drawn 30px below the panel's top, 50px above its bottom and
+    // 10px short of its right edge; all three are the configured insets and all
+    // three survive the parent growing.
+    expect(band.y - p.y).toBeCloseTo(30, 5);
+    expect(p.y + p.height - (band.y + band.height)).toBeCloseTo(50, 5);
+    expect(p.x + p.width - (band.x + band.width)).toBeCloseTo(10, 5);
+    // The field grew straight through it, which must be reported rather than
+    // silently resolved by pushing either of them.
+    expect(out.diagnostics.join(" ")).toContain("overlaps");
+  });
+
+  it("an end-anchored label keeps its distance from the right edge", () => {
+    const out = run({
+      objects: [
+        panel(),
+        text("t1", 110, 50, 100, 20, { layoutParentId: "panel", expansion: { x: { mode: "unbounded" }, y: { mode: "fixed" } } }),
+        rect("label", 180, 140, 100, 20, {
+          layoutParentId: "panel",
+          anchor: { horizontal: "end", vertical: "start", rightOffset: 20 },
+        }),
+      ],
+      measurements: { t1: needs(300, 18) },
+    });
+
+    const p = boxOf(out.objects, "panel");
+    const label = boxOf(out.objects, "label");
+    expect(p.x + p.width - (label.x + label.width)).toBeCloseTo(20, 5);
+  });
+
+  it("a start-anchored sibling does not move when the parent grows", () => {
+    const out = run({
+      objects: [
+        panel(),
+        text("t1", 110, 50, 100, 20, { layoutParentId: "panel", expansion: { x: { mode: "fixed" }, y: { mode: "unbounded" } } }),
+        rect("label", 110, 70, 100, 20, { layoutParentId: "panel", anchor: { vertical: "start" } }),
+      ],
+      measurements: { t1: needs(100, 120) },
+    });
+
+    expect(boxOf(out.objects, "label").y).toBeCloseTo(70, 5);
+  });
+
+  it("reports a fixed frame overflowing on the axis that did not grow", () => {
+    const out = run({
+      objects: [
+        rect("frame", 100, 40, 200, 120, {
+          container: { enabled: true, growthX: "content", growthY: "fixed", padding: { top: 0, right: 0, bottom: 0, left: 0 } },
+        }),
+        text("t1", 110, 50, 100, 20, { layoutParentId: "frame", expansion: { x: { mode: "unbounded" }, y: { mode: "unbounded" } } }),
+      ],
+      measurements: { t1: needs(300, 200) },
+    });
+
+    // X grew (the frame widened to contain 110+300=410), Y stayed fixed and the
+    // text now runs past the bottom, which must be reported rather than hidden.
+    expect(boxOf(out.objects, "frame").width).toBe(310);
+    expect(out.diagnostics.join(" ")).toContain("t1");
+  });
+
+  it("says nothing about siblings that do not overlap", () => {
+    const out = run({
+      objects: [
+        panel(),
+        text("t1", 110, 50, 100, 20, { layoutParentId: "panel", expansion: { x: { mode: "fixed" }, y: { mode: "unbounded" } } }),
+        rect("below", 110, 130, 100, 20, { layoutParentId: "panel" }),
+      ],
+      measurements: { t1: needs(100, 60) },
+    });
+
+    expect(out.diagnostics.join(" ")).not.toContain("overlaps");
+  });
+});
+
+// A sibling of `collisions`, not nested inside one of its cases: a `describe`
+// written inside a running test body registers none of its own tests, which is
+// how the three cases below spent their first life written but never run.
 describe("hierarchy validation", () => {
   const tpl = (layout: unknown, objects: unknown[]) => ({
     templateVersion: 2 as const,

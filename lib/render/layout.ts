@@ -830,6 +830,19 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
           note(
             `"${o.id}" grew past "${holder.id}", which is set to a fixed size; enlarge that box or let it expand`,
           );
+          continue;
+        }
+        // A container that is allowed to grow but was told to stop - by its own
+        // maximum - is the same failure told differently. Saying nothing would
+        // leave an author with text running past a frame that cannot grow any
+        // further, and no reason why.
+        const cappedY = policy?.maxHeight !== undefined && overY;
+        const cappedX = policy?.maxWidth !== undefined && overX;
+        if (cappedY || cappedX) {
+          const limit = cappedY ? policy!.maxHeight : policy!.maxWidth;
+          note(
+            `"${o.id}" needs more room than "${holder.id}" allows; that box is capped at ${limit}px on the ${cappedY ? "vertical" : "horizontal"} axis`,
+          );
         }
         continue;
       }
