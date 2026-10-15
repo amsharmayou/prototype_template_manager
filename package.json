@@ -17,7 +17,6 @@
     "build:billkit": "esbuild lib/billkit/main.ts --bundle --minify --format=iife --target=es2019 --outfile=public/billkit.js"
   },
   "dependencies": {
-    "billkit-format": "file:../shared/billkit-format",
     "docx": "^9.8.1",
     "fabric": "^7.4.0",
     "fflate": "^0.8.3",

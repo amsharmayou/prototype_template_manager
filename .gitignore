@@ -10,9 +10,6 @@
 !.yarn/releases
 !.yarn/versions
 
-# shared billkit-format package: a link to ../shared, which lives in another repository
-node_modules/billkit-format
-
 # testing
 /coverage
 /test-results/

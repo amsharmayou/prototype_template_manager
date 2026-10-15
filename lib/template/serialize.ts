@@ -12,13 +12,17 @@ import {
   TEMPLATE_VERSION,
 } from "@/lib/template/types";
 import type {
+  AxisExpansion,
   BillPartObject,
   BillTemplate,
+  ContainerPolicy,
   FieldObject,
   FreehandObject,
   GroupObject,
   ImagePlaceholderObject,
+  LayoutConfig,
   LineObject,
+  ObjectExpansion,
   PolygonObject,
   ShapeObject,
   SourceRect,
@@ -29,7 +33,6 @@ import type {
   TemplateObjectBase,
   TextObject,
 } from "@/lib/template/types";
-
 /** The minimum shape this module needs from a Fabric object. */
 export interface SerialisableObject {
   type: string;
@@ -110,6 +113,18 @@ function baseFields(
   const box = objectBox(o);
   const id = str(o.id, `obj_${zIndex}`);
   const rawName = str(o.name, "");
+  // Layout membership is explicit and distinct from editor groups: a child
+  // names its container with `layoutParentId`, and an anchor records which
+  // edge it holds onto. Both ride as plain Fabric custom properties so they
+  // survive canvas round-trips, undo snapshots and save/reload.
+  const layoutParentId =
+    typeof o.layoutParentId === "string" && o.layoutParentId.length > 0
+      ? o.layoutParentId
+      : null;
+  const anchor =
+    typeof o.anchor === "object" && o.anchor !== null
+      ? (o.anchor as TemplateObjectBase["anchor"])
+      : undefined;
   return {
     id,
     name: rawName || defaultName(o.type, zIndex),
@@ -123,11 +138,90 @@ function baseFields(
     visible: o.visible !== false,
     locked: o.locked === true || o.selectable === false,
     zIndex,
-    parentId: null,
+    parentId: typeof o.parentId === "string" ? o.parentId : null,
+    layoutParentId,
+    ...(anchor === undefined ? {} : { anchor }),
     stroke: str(o.stroke, "#000000") || "#000000",
     strokeWidth: num(o.strokeWidth, 1),
     fill: str(o.fill, "transparent") || "transparent",
   };
+}
+
+/**
+ * Read a growth policy off a Fabric object, or `undefined` when it has none.
+ *
+ * Read rather than spread: `SerialisableObject` is duck-typed over whatever
+ * Fabric holds, so `expansion` is `unknown` and a half-written or
+ * hand-patched policy must not reach the template as-is. Only the shape the
+ * renderer relies on is accepted - two axes, each with a known mode - and
+ * anything else is treated as "this object has no policy", which is the same
+ * thing it means today.
+ */
+function readExpansion(v: unknown): ObjectExpansion | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const raw = v as { x?: unknown; y?: unknown };
+  const axis = (a: unknown): AxisExpansion | undefined => {
+    if (typeof a !== "object" || a === null) return undefined;
+    const rec = a as Record<string, unknown>;
+    const mode = rec.mode;
+    if (mode !== "fixed" && mode !== "bounded" && mode !== "unbounded") return undefined;
+    const out: AxisExpansion = { mode };
+    if (typeof rec.maxGrowth === "number" && Number.isFinite(rec.maxGrowth)) {
+      out.maxGrowth = rec.maxGrowth;
+    }
+    if (typeof rec.growthGuideId === "string" && rec.growthGuideId.length > 0) {
+      out.growthGuideId = rec.growthGuideId;
+    }
+    if (rec.strategy === "wrap" || rec.strategy === "noWrap") {
+      out.strategy = rec.strategy;
+    }
+    return out;
+  };
+  const x = axis(raw.x);
+  const y = axis(raw.y);
+  if (!x || !y) return undefined;
+  return { x, y };
+}
+
+/**
+ * Read a container policy off a Fabric object, or `undefined` when it has none.
+ *
+ * Same defensive shape as `readExpansion`: only the fields the solver reads
+ * survive, so a half-written policy degrades to "plain frame" rather than a
+ * half-believed container.
+ */
+function readContainer(v: unknown): ContainerPolicy | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const raw = v as Record<string, unknown>;
+  if (raw.enabled !== true) return undefined;
+  const out: ContainerPolicy = { enabled: true };
+  if (raw.growthX === "fixed" || raw.growthX === "content") out.growthX = raw.growthX;
+  if (raw.growthY === "fixed" || raw.growthY === "content") out.growthY = raw.growthY;
+  const pad = raw.padding;
+  if (typeof pad === "object" && pad !== null) {
+    const p = pad as Record<string, unknown>;
+    const side = (k: string): number | undefined => {
+      const n = p[k];
+      return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
+    };
+    const top = side("top");
+    const right = side("right");
+    const bottom = side("bottom");
+    const left = side("left");
+    if (top !== undefined || right !== undefined || bottom !== undefined || left !== undefined) {
+      out.padding = {
+        top: top ?? 0,
+        right: right ?? 0,
+        bottom: bottom ?? 0,
+        left: left ?? 0,
+      };
+    }
+  }
+  for (const k of ["minWidth", "minHeight", "maxWidth", "maxHeight"] as const) {
+    const n = raw[k];
+    if (typeof n === "number" && Number.isFinite(n) && n >= 0) out[k] = n;
+  }
+  return out;
 }
 
 export function defaultName(type: string, index: number): string {
@@ -208,8 +302,13 @@ function serialiseTable(
   const rowHeights = Array.isArray(o.rowHeights)
     ? (o.rowHeights as number[]).map((n) => num(n, 24))
     : [base.height / 2, base.height / 2];
-  const rawCells = Array.isArray(o.cells) ? (o.cells as TableCell[]) : [];
-  const repeat = serialiseRepeat((o as unknown as { repeat?: unknown }).repeat);
+const rawCells = Array.isArray(o.cells) ? (o.cells as TableCell[]) : [];
+    const repeat = serialiseRepeat((o as unknown as { repeat?: unknown }).repeat);
+    // Row growth is read through the same validation as a text object's, then
+    // narrowed to the y axis: a column policy here would be stored and then
+    // ignored by the renderer, which is worse than not offering it.
+    const rawExpansion = readExpansion((o as unknown as { expansion?: unknown }).expansion);
+    const rowPolicy = rawExpansion?.y ? { x: { mode: "fixed" as const }, y: rawExpansion.y } : undefined;
   const count = colWidths.length * rowHeights.length;
   const cells: TableCell[] = [];
   for (let i = 0; i < count; i++) {
@@ -237,11 +336,15 @@ function serialiseTable(
     headerFill: str(o.headerFill, "transparent"),
     headerTextColor: str(o.headerTextColor, "#000000"),
     cellTextColor: str(o.cellTextColor, "#000000"),
-    padding: num(o.padding, 4),
-    fontFamily: str(o.fontFamily, "Arial"),
-    ...(repeat ? { repeat } : {}),
-  };
-}
+padding: num(o.padding, 4),
+      fontFamily: str(o.fontFamily, "Arial"),
+      // Same validated shape a text object carries, so one editor control and
+      // one validator rule cover both. Only `y` survives: a column that grew
+      // would change the table's own width, which no repeat band may do.
+      ...(rowPolicy ? { expansion: rowPolicy } : {}),
+      ...(repeat ? { repeat } : {}),
+    };
+  }
 
 function serialiseText(o: SerialisableObject, zIndex: number): TextObject {
   const base = baseFields(o, zIndex);
@@ -255,6 +358,7 @@ function serialiseText(o: SerialisableObject, zIndex: number): TextObject {
   // really holds plus the scale beside them, and the renderer re-applies it.
   const scaleX = num(o.scaleX, 1);
   const scaleY = num(o.scaleY, 1);
+  const growth = readExpansion(o.expansion);
   return {
     ...base,
     type: "text",
@@ -282,6 +386,7 @@ function serialiseText(o: SerialisableObject, zIndex: number): TextObject {
     // Only a box that actually wraps carries a wrap width, so an auto-width box
     // stays on the long-standing single-line behaviour.
     ...(num(o.wrapWidth) > 0 ? { wrapWidth: num(o.wrapWidth) } : {}),
+    ...(growth === undefined ? {} : { expansion: growth }),
   };
 }
 
@@ -328,6 +433,7 @@ function serialiseBillPart(
 
 function serialiseField(o: SerialisableObject, zIndex: number): FieldObject {
   const key = str(o.key, "field");
+  const growth = readExpansion(o.expansion);
   return {
     ...baseFields(o, zIndex),
     type: "field",
@@ -349,6 +455,7 @@ function serialiseField(o: SerialisableObject, zIndex: number): FieldObject {
     charSpacing: num(o.charSpacing, 0),
     roleKind: "variable",
     textVerticalAlign: "top",
+    ...(growth === undefined ? {} : { expansion: growth }),
   };
 }
 
@@ -457,6 +564,11 @@ export function serialiseObject(
     case "ellipse":
     case "circle": {
       const base = baseFields(o, zIndex);
+      // Shapes persist a *follower* policy only: unlike text/field/table they
+      // carry no measurable content, so the solver honours their expansion
+      // solely through a linked growth guide (see layout.ts).
+      const growth = readExpansion(o.expansion);
+      const container = readContainer(o.container);
       return {
         ...base,
         type:
@@ -466,6 +578,8 @@ export function serialiseObject(
               ? "rounded-rect"
               : (type as ShapeObject["type"]),
         cornerRadius: num(o.rx, 0),
+        ...(growth === undefined ? {} : { expansion: growth }),
+        ...(container === undefined ? {} : { container }),
       };
     }
     case "group":
@@ -484,6 +598,7 @@ export function serialiseObjects(
   objects: readonly SerialisableObject[],
   doc: { width: number; height: number },
   name: string,
+  layout?: LayoutConfig,
 ): BillTemplate {
   const out: TemplateObject[] = [];
   for (const o of objects) {
@@ -495,6 +610,11 @@ export function serialiseObjects(
     document: { width: doc.width, height: doc.height },
     meta: { name, modifiedAt: new Date().toISOString() },
     objects: out,
+    // Omitted rather than defaulted: the absence of this key is what tells a
+    // renderer the template is fixed-layout, so writing `mode: "fixed"` here
+    // would make "never configured" indistinguishable from "configured not to
+    // grow".
+    ...(layout === undefined ? {} : { layout }),
   };
 }
 

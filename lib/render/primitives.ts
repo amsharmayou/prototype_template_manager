@@ -16,6 +16,14 @@ import { attr, escapeHtml } from "./escape";
 import { resolveText } from "./values";
 
 /**
+ * Whether an unfilled slot is painted at all.
+ *
+ * Named here rather than imported from `./index` because `index` is the caller
+ * and importing back would make the two modules circular.
+ */
+export type PlaceholderMode = "hide" | "show";
+
+/**
  * Two decimals is the precision the traced geometry is stored at, so a longer
  * tail would be noise. It also keeps a float artefact out of the output:
  * 12 * 1.16 is 13.919999999999998 in binary floating point, not 13.92.
@@ -104,6 +112,41 @@ function shell(
 }
 
 const ALIGNMENTS = new Set(["left", "center", "right"]);
+
+/**
+ * Same grammar as `TOKEN_SOURCE` in `./values` and `TOKEN_SOURCE` in
+ * `../template/placeholders`.
+ *
+ * Duplicated a third time on purpose. `values.ts` is part of the vendored
+ * format package, so exporting from it would mean the admin server's copy has
+ * to change with this file; this renderer is not vendored and is free to carry
+ * its own. `renderPlaceholders.test.ts` asserts the three agree, which is what
+ * makes the duplication safe rather than merely tolerated.
+ */
+const UNRESOLVED_TOKEN = /\{\{[^}]*\}\}/g;
+
+/**
+ * Removes the tokens that survived resolution because no value was supplied.
+ *
+ * `resolveText` deliberately leaves such a token in place, so a half-filled
+ * page stays legible. That is the right call while authoring and the wrong one
+ * on paper, where `{{Consignment OR}}` reads as content rather than as an
+ * instruction, so this is applied only when the caller asked for a clean page.
+ *
+ * Deliberately wider than the grammar resolution uses. `resolveText` matches
+ * `[a-zA-Z0-9_.-]+`, so a hand-authored token with a space in it -
+ * `{{Consignment OR}}` - is not a token the renderer can ever resolve, and it
+ * stays a literal mark on the bill forever. Hiding is the right answer for
+ * those too: whatever survived resolution has no value and cannot acquire one,
+ * so under this mode it is a placeholder mark rather than content.
+ *
+ * Only the token goes: a label with an unfilled slot keeps the words the author
+ * traced around it, and a box whose whole content was one token empties to
+ * nothing. An empty box carries no border, so it simply is not there.
+ */
+function stripUnresolvedTokens(text: string): string {
+  return text.replace(UNRESOLVED_TOKEN, "");
+}
 
 function align(v: unknown, r: Refusals, field: string): "left" | "center" | "right" {
   if (typeof v === "string" && ALIGNMENTS.has(v)) return v as "left" | "center" | "right";
@@ -247,6 +290,7 @@ function renderText(
   r: Refusals,
   /** Extra declarations, appended last so they win over the defaults. */
   extra: readonly string[] = [],
+  placeholders: PlaceholderMode = "hide",
 ): string {
   const size = length(o.fontSize, r, `${o.id}.fontSize`, 12);
   // Letter spacing is a font-relative measure, so it is stated in em and stays
@@ -286,12 +330,15 @@ function renderText(
     `text-align: ${align(o.textAlign, r, `${o.id}.textAlign`)}`,
     `letter-spacing: ${tracking}em`,
   ];
+  const resolved = resolveText(typeof o.text === "string" ? o.text : "", values);
   const body =
     `<div class="tx" style="${attr(css([
       "display: flex",
       "flex-direction: column",
       `justify-content: ${distribution}`,
-    ]))}">${escapeHtml(resolveText(typeof o.text === "string" ? o.text : "", values))}</div>`;
+    ]))}">${escapeHtml(
+      placeholders === "hide" ? stripUnresolvedTokens(resolved) : resolved,
+    )}</div>`;
   return div(
     index,
     "o t",
@@ -370,6 +417,7 @@ function renderTable(
   index: number,
   values: Readonly<Record<string, string>>,
   r: Refusals,
+  placeholders: PlaceholderMode = "hide",
 ): string | null {
   const cols = (Array.isArray(o.colWidths) ? o.colWidths : []).map((w, i) =>
     length(w, r, `${o.id}.colWidths[${i}]`, 0),
@@ -390,8 +438,9 @@ function renderTable(
     for (let c = 0; c < cols.length; c++) {
       const cell = cells[at * cols.length + c];
       const tag = isHeader ? "th" : "td";
+      const resolved = resolveText(typeof cell?.text === "string" ? cell.text : "", values);
       const text = escapeHtml(
-        resolveText(typeof cell?.text === "string" ? cell.text : "", values),
+        placeholders === "hide" ? stripUnresolvedTokens(resolved) : resolved,
       );
       body.push(`<${tag} style="${attr(cellStyle(cell, o, shared, r, isHeader))}">${text}</${tag}>`);
     }
@@ -441,7 +490,8 @@ function renderPlaceholder(
   index: number,
   values: Readonly<Record<string, string>>,
   r: Refusals,
-): string {
+  placeholders: PlaceholderMode = "hide",
+): string | null {
   // A bound image wins over the dashed slot: values win over the template's
   // own src so a statically-filled template can be re-bound at export time.
   const fromValues = values[o.placeholderRole];
@@ -451,6 +501,11 @@ function renderPlaceholder(
       shell(o, r, ["object-fit: contain"]),
     )}" src="${attr(src)}" alt="${attr(typeof o.label === "string" ? o.label : "")}" />`;
   }
+  // Nothing bound, so on paper the slot has no content at all. Drawing the
+  // dashed box and its label would print "put an image here" onto a finished
+  // bill - an instruction the reader cannot act on.
+  // `null` drops the object; the caller filters nulls out of the body.
+  if (placeholders === "hide") return null;
   return div(
     index,
     "o ph",
@@ -495,6 +550,7 @@ export function renderObject(
   index: number,
   values: Readonly<Record<string, string>>,
   r: Refusals,
+  placeholders: PlaceholderMode = "hide",
 ): string | null {
   // The switch below covers every member of the union, so TypeScript treats the
   // implicit end as unreachable and never asks for a default. A template that
@@ -531,7 +587,7 @@ export function renderObject(
     case "freehand":
       return renderFreehand(o, index, r);
     case "text":
-      return renderText(o, index, values, r);
+      return renderText(o, index, values, r, [], placeholders);
     case "field": {
       // A field is a box the author drew to a purpose — a tick, a checkbox, a
       // date — so its value is bounded by that box rather than spilling across
@@ -556,12 +612,13 @@ export function renderObject(
         values,
         r,
         ["overflow: hidden"],
+        placeholders,
       );
     }
     case "table":
-      return renderTable(o, index, values, r);
+      return renderTable(o, index, values, r, placeholders);
     case "image-placeholder":
-      return renderPlaceholder(o, index, values, r);
+      return renderPlaceholder(o, index, values, r, placeholders);
     case "bill-part":
       return renderBillPart(o, index, r);
     default:

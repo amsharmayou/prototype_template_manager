@@ -28,7 +28,7 @@
 
 ### Task 1: Byte hashing and an explicit fflate dependency
 
-Package checksums must cover binary PNG bytes, but `sha256Hex` accepts only a string and runs it through an internal UTF-8 encoder. Also promote `fflate` from a transitive dependency of `docx` to a declared one: relying on a transitive dependency means a future `docx` bump breaks package reading invisibly.
+Package checksums must cover binary PNG bytes, but `sha256Hex` accepts only a string and runs it through an internal UTF-8 encoder. Also promote `fflate` from a transitive dependency of `jspdf` to a declared one: relying on a transitive dependency means a future `jspdf` bump breaks package reading invisibly.
 
 **Files:**
 - Modify: `lib/render/sha256.ts`
@@ -147,6 +147,9 @@ node -e "const p=require('./package.json'); console.log('declared:', p.dependenc
 ```
 
 Expected: both printed, and they match.
+
+The zip round-trip test already sits in Step 1's file, so there is nothing to append here - that
+test is what proves `fflate` works in the node test environment before anything depends on it.
 
 - [ ] **Step 6: Run the full gate**
 
@@ -910,7 +913,7 @@ export function validatePackage(pkg: Package): { ok: boolean; issues: Issue[] } 
 
 Run: `npx.cmd vitest run tests/packageValidate.test.ts`
 
-Expected: PASS, 12 tests.
+Expected: PASS, 13 tests.
 
 - [ ] **Step 5: Run the full gate**
 
@@ -938,13 +941,48 @@ git commit -m "feat: strict package validator reporting errors and warnings"
 - Consumes: `Package`, `PackageManifest`, `ComputedSpec` from `@/lib/package/format`; `extractTemplateFields` from `@/lib/template/dataBinding`; `BillTemplate` from `@/lib/template/types`; `sha256HexBytes` from `@/lib/render/sha256`; `zipSync`/`unzipSync`/`strToU8`/`strFromU8` from `fflate`.
 - Produces: `BuildOptions`, `buildPackage(template: BillTemplate, options?: BuildOptions): Package`, `writePackage(pkg: Package): Uint8Array`, `parsePackage(bytes: Uint8Array): Package` (throws only for an unreadable archive).
 
-**Note on `buildPackage` and repeating fields.** The manifest fields come straight from
-`extractTemplateFields`, which knows nothing about repeat bands, so a freshly built manifest
-contains no field of `type: "repeating"` and no `columns`. That is deliberate, not an oversight:
-Task 11 recovers the band and its columns from the template itself, so the derived form is
-correct either way. Do **not** "fix" this by teaching `extractTemplateFields` about bands - the
-validator in Task 3 requires `columns` on any `repeating` field, and synthesising one here
-without `maxItems` would produce a manifest that fails its own validation.
+**Note on `buildPackage` and repeating fields.** Task 3's validator resolves cross-references: a
+`computed` arg like `items.amount` must name a repeat that the manifest itself declares, with that
+column among its `columns`. That only holds if `buildPackage` emits the repeat, so this step now
+does. After mapping `extractTemplateFields` output into `fields`, add one manifest field per
+table repeat band, so the manifest is self-consistent and passes the validator Task 3 wrote:
+
+```ts
+  const fields: PackageManifest["fields"] = extractTemplateFields({ ...template, objects }).map(
+    (f) => ({
+      key: f.key,
+      label: f.label,
+      type: f.type,
+      source: f.source,
+      objectName: f.objectName,
+      ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
+    }),
+  );
+
+  // One manifest field per repeat band. Without this the manifest declares no
+  // `repeating` field at all, and a host deriving a form from it would show no
+  // line-item editor while the renderer's computed totals still reference
+  // `items.amount` - a form that silently cannot be filled in.
+  for (const o of template.objects) {
+    if (o.type !== "table" || !o.repeat || typeof o.repeat.key !== "string") continue;
+    if (fields.some((f) => f.key === o.repeat!.key)) continue;
+    fields.push({
+      key: o.repeat.key,
+      label: o.name || o.repeat.key,
+      type: "repeating",
+      source: "table",
+      objectName: o.name,
+      columns: bandColumns(o, o.repeat.startRow, o.repeat.endRow),
+      maxItems: o.repeat.maxItems,
+    });
+  }
+```
+
+`bandColumns` reads the distinct `{{token}}` names out of the band's own cells using
+`extractVariables` from `@/lib/template/placeholders`, in band order — the same rule Task 11 uses,
+declared here so the manifest and the derived form cannot disagree. Note this is buildPackage
+post-processing: `extractTemplateFields` stays unaware of bands, because it is also read by the
+renderer-facing path.
 
 - [ ] **Step 1: Write the failing round-trip test**
 
@@ -1073,6 +1111,23 @@ describe("package round-trip", () => {
   it("refuses to parse bytes that are not a zip", () => {
     expect(() => parsePackage(new TextEncoder().encode("not a zip"))).toThrow();
   });
+
+  it("reports a manifest edited after it was written", () => {
+    // The manifest is the one member that cannot carry its own digest, so the
+    // sibling `manifest.json.sha256` is what makes tampering detectable. Without
+    // this check the manifest is the blind spot in an otherwise verified package.
+    const good = writePackage(buildPackage(base()));
+    const back = parsePackage(good);
+    const tampered: Package = { ...back, manifest: { ...back.manifest, name: "Swapped" } };
+    const result = validatePackage(tampered);
+    expect(result.ok).toBe(false);
+    expect(result.issues.some((i) => i.path === "manifest")).toBe(true);
+  });
+
+  it("verifies a manifest that was not tampered with", () => {
+    const back = parsePackage(writePackage(buildPackage(base())));
+    expect(validatePackage(back).ok).toBe(true);
+  });
 });
 ```
 
@@ -1119,16 +1174,22 @@ function safeName(id: string): string {
 /**
  * Turn a template into the distributable package form.
  *
- * Images move out of the JSON and into the archive. Base64 inflates binary by a
- * third, and holding the bytes in one place is what lets a host read one asset
- * without parsing the whole document.
+ * Images move out of the JSON and into the archive.
+ *
+ * The archive-level size win is small - measured at 2-3%, not the third that
+ * base64's overhead suggests, because deflate's Huffman coding already recovers
+ * most of that inflation: base64 carries 6 bits per character, so it compresses
+ * almost back down before extraction is even considered. What extraction
+ * actually buys is that template.json stops carrying megabytes of text, so
+ * reading the template is cheap and each image is a separately addressable member
+ * a host can fetch without parsing the whole document.
  */
 export function buildPackage(template: BillTemplate, options: BuildOptions = {}): Package {
   const files = new Map<string, Uint8Array>();
   const assets: PackageManifest["assets"] = [];
   const bySrc = new Map<string, string>();
 
-  const unusedName = (id: string): string => {
+  const uniqueAssetName = (id: string): string => {
     const base = `assets/${safeName(id)}.png`;
     if (!files.has(base)) return base;
     let n = 2;
@@ -1146,7 +1207,7 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
     if (known) return { ...o, src: `pkg://${known}` } as TemplateObject;
 
     const role = o.type === "bill-part" ? "bill-part" : "image-placeholder";
-    const name = unusedName(o.id);
+    const name = uniqueAssetName(o.id);
     bySrc.set(src, name);
     files.set(name, decodeDataUri(src));
     assets.push({
@@ -1353,7 +1414,7 @@ export function parsePackage(bytes: Uint8Array): Package {
 
 Run: `npx.cmd vitest run tests/packageRoundTrip.test.ts`
 
-Expected: PASS, 9 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 6: Run the full gate**
 
@@ -1586,7 +1647,7 @@ git commit -m "feat: resolve package asset references back to data URIs"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `amountToWords(minorUnits: number, scale: number, currency?: string): string`
+- Produces: `spellMoney(minorUnits: number, scale: number, currency?: string): string`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1595,45 +1656,45 @@ Create `tests/words.test.ts`:
 ```ts
 import { describe, expect, it } from "vitest";
 
-import { amountToWords } from "@/lib/render/words";
+import { spellMoney } from "@/lib/render/words";
 
-describe("amountToWords", () => {
+describe("spellMoney", () => {
   it("spells out a paise amount", () => {
-    expect(amountToWords(100, 2)).toBe("One Rupee");
-    expect(amountToWords(1050, 2)).toBe("Ten Rupees Fifty Paise Only");
+    expect(spellMoney(100, 2)).toBe("One Rupee");
+    expect(spellMoney(1050, 2)).toBe("Ten Rupees Fifty Paise Only");
   });
 
   it("handles zero", () => {
-    expect(amountToWords(0, 2)).toBe("Zero Rupees Only");
+    expect(spellMoney(0, 2)).toBe("Zero Rupees Only");
   });
 
   it("handles rupees above ninety-nine", () => {
-    expect(amountToWords(123456, 2)).toBe(
+    expect(spellMoney(123456, 2)).toBe(
       "One Thousand Two Hundred Thirty Four Rupees Fifty Six Paise Only",
     );
   });
 
   it("groups Indian numbering correctly", () => {
     // 12,34,567.89 is lakh/crore grouping, not Western thousands.
-    expect(amountToWords(123456789, 2)).toBe(
+    expect(spellMoney(123456789, 2)).toBe(
       "Twelve Lakh Thirty Four Thousand Five Hundred Sixty Seven Rupees Eighty Nine Paise Only",
     );
   });
 
   it("handles crores", () => {
-    expect(amountToWords(10000000, 2)).toBe("One Crore Rupees Only");
+    expect(spellMoney(10000000, 2)).toBe("One Crore Rupees Only");
   });
 
   it("honours a zero decimal scale", () => {
-    expect(amountToWords(42, 0)).toBe("Forty Two Rupees Only");
+    expect(spellMoney(42, 0)).toBe("Forty Two Rupees Only");
   });
 
   it("uses the currency it is given", () => {
-    expect(amountToWords(100, 2, "USD")).toBe("One Dollar Only");
+    expect(spellMoney(100, 2, "USD")).toBe("One Dollar Only");
   });
 
   it("never produces an empty string for a negative amount", () => {
-    expect(amountToWords(-100, 2).length).toBeGreaterThan(0);
+    expect(spellMoney(-100, 2).length).toBeGreaterThan(0);
   });
 });
 ```
@@ -1712,7 +1773,7 @@ function plural(word: string, n: number): string {
  * `minorUnits` is an integer count of the smallest currency unit, so the
  * arithmetic stays exact. `scale` is how many decimal places that unit carries.
  */
-export function amountToWords(minorUnits: number, scale: number, currency?: string): string {
+export function spellMoney(minorUnits: number, scale: number, currency?: string): string {
   const safe = Number.isInteger(scale) && scale >= 0 && scale <= 6 ? scale : 2;
   const names = CURRENCY[(currency ?? "inr").toLowerCase()] ?? { major: "Unit", minor: "Cent" };
   const n = Math.abs(Math.round(minorUnits));
@@ -2133,7 +2194,7 @@ export function computeAll(
 
 Run: `npx.cmd vitest run tests/computed.test.ts`
 
-Expected: PASS, 16 tests. If `sum-times` disagrees on `44.50`, check the product is `minorQty * minorRate` and re-scaled by `10^scale`.
+Expected: PASS, 18 tests. If `sum-times` disagrees on `44.50`, check the product is `minorQty * minorRate` and re-scaled by `10^scale`.
 
 - [ ] **Step 5: Run the full gate**
 
@@ -2538,7 +2599,7 @@ export function expandRepeats(
 
 Run: `npx.cmd vitest run tests/repeat.test.ts`
 
-Expected: PASS, 11 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 5: Run the full gate**
 
@@ -2560,7 +2621,6 @@ git commit -m "feat: expand repeat bands into rows, one set per item"
 Without this the band is authored, then silently disappears the next time the template is saved, because `serialiseTable` and `hydrateTable` know nothing about it.
 
 **Files:**
-- Modify: `lib/template/types.ts`
 - Modify: `lib/template/serialize.ts`
 - Modify: `lib/template/hydrate.ts`
 - Modify: `lib/canvas/objects/BillTable.ts`
@@ -3362,7 +3422,7 @@ export function deriveForm(manifest: PackageManifest, template?: BillTemplate): 
 
 Run: `npx.cmd vitest run tests/packageForm.test.ts`
 
-Expected: PASS, 8 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Run the full gate**
 

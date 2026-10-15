@@ -12,9 +12,18 @@ import type { BillTemplate } from "@/lib/template/types";
  * The page is created in `px` units so 1 document unit maps to 1 PDF unit and
  * the traced geometry keeps its coordinates. Content comes from the template
  * SVG, so the reference image is never included.
+ *
+ * `page` is the size the document was actually *drawn* at, which is not always
+ * the size it was traced at: a variable-layout bill grows to fit its content,
+ * and taking the height from `template.document` would put a grown receipt on
+ * a sheet sized for the short one.
  */
-export async function exportPdf(template: BillTemplate): Promise<void> {
-  const { width, height } = template.document;
+export async function exportPdf(
+  template: BillTemplate,
+  page?: { width: number; height: number },
+): Promise<void> {
+  const width = page && page.width > 0 ? page.width : template.document.width;
+  const height = page && page.height > 0 ? page.height : template.document.height;
   const pdf = new jsPDF({
     orientation: width >= height ? "landscape" : "portrait",
     unit: "px",

@@ -15,7 +15,8 @@ Four things stand in the way:
 
 1. **There is no package.** A template is a bare JSON file opened with a file picker. There
    is no manifest, no declared schema version, no formal validation, and no asset directory.
-   Bill-part images are inlined as base64, which inflates them by a third.
+   Bill-part images are inlined as base64, which bloats `template.json` with megabytes of text and
+makes every read of the template pay to parse it.
 2. **There is no contract.** A frontend cannot know what a template will ask for, what
    values are valid, or whether a file it was handed is well-formed. `RenderClient.importTemplate`
    performs `JSON.parse` with **zero** structural checks; `EditorController.loadTemplate` performs

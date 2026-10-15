@@ -61,7 +61,25 @@ function bandOf(o: TableObject): { band: Band; why: string | null } | null {
   const startRow: unknown = r.startRow;
   const endRow: unknown = r.endRow;
   const key: unknown = r.key;
-  const rows = typeof o.rows === "number" && Number.isInteger(o.rows) ? o.rows : 0;
+  // The row count is taken from `rows`, then `rowHeights`, then the cell array.
+  // A table that carries any of the latter two and omits the first is not
+  // broken - it is just written by hand or by an older serialiser, and
+  // rejecting its band would drop every repeating row with only a warning to
+  // say so. The bounds check below still runs, so a genuinely empty table is
+  // still refused.
+  const heights = Array.isArray(o.rowHeights) ? o.rowHeights : [];
+  const cells = Array.isArray(o.cells) ? o.cells : [];
+  const columns =
+    typeof o.columns === "number" && Number.isInteger(o.columns) && o.columns > 0 ? o.columns : 1;
+  // The row count is taken from `rows`, then `rowHeights`, then the cell array.
+  // A table carrying the latter two but not the first is not broken - it is
+  // just written by hand or by a tool other than this one, and refusing its
+  // band dropped every repeating row behind a warning nobody sees on a bill.
+  const rows = Math.max(
+    typeof o.rows === "number" && Number.isInteger(o.rows) && o.rows > 0 ? o.rows : 0,
+    heights.length,
+    Math.ceil(cells.length / columns),
+  );
   const problem = (why: string): { band: Band; why: string } => ({
     band: { startRow: 0, endRow: 0, key: "", maxItems: DEFAULT_REPEAT_MAX_ITEMS },
     why,
@@ -150,7 +168,18 @@ function expandTable(
 
   const cells = Array.isArray(o.cells) ? o.cells : [];
   const heights = Array.isArray(o.rowHeights) ? o.rowHeights : [];
-  const rows = typeof o.rows === "number" ? o.rows : 0;
+  // `rows` is the authoritative count, but a hand-written or partially
+  // serialised table can carry `rowHeights` without it. Falling back to the
+  // heights is what lets such a band expand at all; believing a missing count
+  // silently produced "last row is past the end of the table".
+  // A table that omits `rows` still has a real row count, and [bandOf] resolved
+  // it the same way - so the copy loop and the bounds check agree on what "row
+  // 2" means.
+  const rows = Math.max(
+    typeof o.rows === "number" && o.rows > 0 ? o.rows : 0,
+    heights.length,
+    Math.ceil(cells.length / columns),
+  );
   const at = (r: number, c: number): TableCell =>
     cells[r * columns + c] ?? { text: "", textAlign: "left", fontSize: 10, fontWeight: "normal" };
 

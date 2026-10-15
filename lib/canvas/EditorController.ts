@@ -17,6 +17,27 @@ import {
 } from "fabric";
 
 import { BillTable } from "@/lib/canvas/objects/BillTable";
+import {
+  GUIDE_APP_TYPE,
+  createGuide,
+  guidesFromObjects,
+  isGuide,
+  nextGuideId,
+  withLayoutMode,
+} from "@/lib/canvas/guides";
+import type {
+  AttachmentBehavior,
+  AttachmentEdge,
+  BillTemplate,
+  ChildAnchor,
+  ContainerPolicy,
+  ObjectExpansion,
+  PlaceholderSpec,
+  LayoutConfig,
+  TableObject,
+  TableRepeat,
+  TemplateObject,
+} from "@/lib/template/types";
 import { normaliseRepeat } from "@/lib/canvas/tableRepeat";
 import { interiorGridLevels } from "@/lib/canvas/tableGrid";
 import { FieldObject } from "@/lib/canvas/objects/BillField";
@@ -76,19 +97,15 @@ import { parsePackage } from "@/lib/package/parse";
 import { resolvePackage } from "@/lib/package/resolve";
 import { computedSpecsFor } from "@/lib/package/computedSpecs";
 import { renderHtml } from "@/lib/render";
-import type {
-  BillTemplate,
-  PlaceholderSpec,
-  TableObject,
-  TableRepeat,
-  TemplateObject,
-} from "@/lib/template/types";
+import type { LayoutGuide } from "@/lib/template/types";
 import { A4_HEIGHT, A4_WIDTH } from "@/lib/template/types";
 
 registerAppProperties();
 
 export type ToolId =
   | "select"
+  | "guide-h"
+  | "guide-v"
   | "line"
   | "rect"
   | "rounded-rect"
@@ -106,6 +123,8 @@ export type ToolId =
 
 export const TOOL_LABELS: Record<ToolId, string> = {
   select: "Select",
+  "guide-h": "Guide H",
+  "guide-v": "Guide V",
   line: "Line",
   rect: "Rectangle",
   "rounded-rect": "Rounded Rect",
@@ -179,6 +198,15 @@ export interface EditorState {
   objectCount: number;
   /** Per-key contracts for dynamic placeholders, editable in the panel. */
   placeholders: PlaceholderSpec[];
+  /**
+   * Variable-layout configuration for the document, or `undefined` for a
+   * fixed-layout template.
+   *
+   * Optional rather than defaulted to `{ mode: "fixed" }` on purpose: the
+   * absence of the block is what a renderer reads as "this template is a
+   * fixed-layout one", so the two states must not collapse into each other.
+   */
+  layout?: LayoutConfig;
   /** Hex colour sampled with the eyedropper tool, kept for reference. */
   sampledColour: string | null;
   /** Whether the traced structure is locked (fields remain editable). */
@@ -953,6 +981,10 @@ export class EditorController {
         break;
       case "image-placeholder":
         this.beginImagePlaceholder();
+        break;
+      case "guide-h":
+      case "guide-v":
+        this.addGuide(tool === "guide-h" ? "horizontal" : "vertical", p);
         break;
       case "bill-part":
         this.beginBillPart();
@@ -1800,11 +1832,15 @@ export class EditorController {
   private onObjectModified = (opt: { target?: FabricObject }): void => {
     // Close the resize gesture on the object that was actually transformed,
     // then write one history entry, so a whole drag is a single undo step.
-    if (opt.target instanceof BillTable) opt.target.endResizeGesture();
-    else this.getTable()?.endResizeGesture();
-    this.lastKnownScenePoint = null;
-    this.commit("Transform");
-  };
+if (opt.target instanceof BillTable) opt.target.endResizeGesture();
+      else this.getTable()?.endResizeGesture();
+      // A dragged guide is new template state, so it has to be read off the
+      // canvas before the snapshot is taken - otherwise the undo entry records
+      // the guide's old position and redoing it loses the move.
+      if (opt.target && isGuide(opt.target)) this.syncGuides();
+      this.lastKnownScenePoint = null;
+      this.commit("Transform");
+    };
 
   private onTextChanged = (opt: { target?: FabricObject }): void => {
     const target = opt.target;
@@ -1846,10 +1882,107 @@ export class EditorController {
   /* History                                                           */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * Drop a marking line at the click.
+   *
+   * The line spans the page rather than being dragged to a length, because a
+   * boundary is not artwork: it is an infinite rule the bill is allowed to
+   * push, and its length is a property of the page, not of the author.
+   */
+  private addGuide(
+    orientation: "horizontal" | "vertical",
+    at: { x: number; y: number },
+  ): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const existing = guidesFromObjects(canvas.getObjects());
+    const guide: LayoutGuide = {
+      id: nextGuideId(existing),
+      orientation,
+      position: orientation === "horizontal" ? at.y : at.x,
+    };
+
+    canvas.add(this.makeGuideOverlay(guide));
+    this.syncGuides();
+    this.commit("Add guide");
+    this.setTool("select");
+  }
+
+  /**
+   * Build the canvas line for a guide.
+   *
+   * Drawn across the page rather than dragged to a length, because a boundary
+   * is not artwork: it is a rule the bill is allowed to push, and its extent is
+   * a property of the page, not of the author.
+   */
+  private makeGuideOverlay(guide: LayoutGuide): Line {
+    const { width, height } = this.state.document;
+    const points: [number, number, number, number] =
+      guide.orientation === "horizontal"
+        ? [0, 0, width, 0]
+        : [0, 0, 0, height];
+    const line = new Line(points, {
+      left: 0,
+      top: guide.position,
+      stroke: "#2563eb",
+      strokeWidth: 1,
+      strokeDashArray: [6, 4],
+      strokeUniform: true,
+      originX: "left",
+      originY: "top",
+      selectable: true,
+      evented: true,
+      hasControls: false,
+      excludeFromExport: true,
+    });
+    this.tag(line, GUIDE_APP_TYPE, `Guide ${guide.id}`);
+    line.set({
+      guideId: guide.id,
+      guideOrientation: guide.orientation,
+      ...(guide.maxDisplacement !== undefined
+        ? { guideMaxDisplacement: guide.maxDisplacement }
+        : {}),
+    } as never);
+    return line;
+  }
+
+  /**
+   * Put a template's guides back on the canvas when it is opened.
+   *
+   * No history entry and no state write: the layout already in `state` is the
+   * authoritative record, and the overlays are its on-screen form.
+   */
+  private restoreGuides(guides: readonly LayoutGuide[]): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    for (const g of guides) canvas.add(this.makeGuideOverlay(g));
+  }
+
+  /**
+   * Read the guides off the canvas into the template's layout block.
+   *
+   * Called after anything that could move one, so what a save writes is always
+   * what the author can see.
+   */
+  private syncGuides(): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const guides = guidesFromObjects(canvas.getObjects());
+    this.setState({ layout: withLayoutMode(this.state.layout, guides) ?? undefined });
+  }
+
+  /**
+   * Bill artwork only.
+   *
+   * A guide overlay is filtered out here rather than at the serialiser,
+   * because this is also what undo snapshots and the render preview read: one
+   * filter at the source of the list means every consumer downstream gets bill
+   * artwork and cannot accidentally include a layout boundary.
+   */
   private tracedObjects(): FabricObject[] {
     const canvas = this.canvas;
     if (!canvas) return [];
-    return canvas.getObjects();
+    return canvas.getObjects().filter((o) => !isGuide(o));
   }
 
   /**
@@ -1865,6 +1998,7 @@ export class EditorController {
         this.tracedObjects() as never,
         this.state.document,
         this.state.documentName,
+        this.state.layout,
       ),
       groups: this.state.groups,
     });
@@ -1920,6 +2054,11 @@ export class EditorController {
       pendingTable: null,
       document: { ...template.document },
       groups,
+      // The snapshot carries the layout block, so undo and redo restore it
+      // along with the geometry. Without this an undo would leave the rules on
+      // the objects but drop them from the document, and the next save would
+      // write a template whose guides no longer match its fields.
+      layout: template.layout,
     });
     this.lockReferenceToDocument();
     this.applyCanvasSize();
@@ -2103,15 +2242,34 @@ export class EditorController {
     // for a tracing tool.
     const groupIds = new Set<string>();
     const objects: FabricObject[] = [];
+    const droppedGuides = new Set<string>();
     for (const o of this.getActiveObjects()) {
       const id = this.getId(o);
       for (const g of this.state.groups) {
         if (g.members.includes(id)) groupIds.add(g.id);
       }
+      if (isGuide(o)) {
+        // Removing a boundary must also drop what hung off it. An attachment
+        // pointing at a guide that no longer exists is a dangling reference the
+        // solver would have to guess about, and the object's edge would silently
+        // stop following anything.
+        const guideId = (o as unknown as { guideId?: string }).guideId;
+        if (typeof guideId === "string") droppedGuides.add(guideId);
+      }
       if (!this.isLocked(o)) objects.push(o);
     }
     if (groupIds.size === 0 && objects.length === 0) return;
     canvas.discardActiveObject();
+    // Children naming a deleted container must not keep pointing at it: a
+    // `layoutParentId` with no object behind it fails validation on the next
+    // save, so the link is cleared while the intent (anchor) is kept.
+    const removedIds = new Set(objects.map((o) => this.getId(o)));
+    for (const o of canvas.getObjects()) {
+      const rec = o as unknown as { layoutParentId?: unknown };
+      if (typeof rec.layoutParentId === "string" && removedIds.has(rec.layoutParentId)) {
+        o.set({ layoutParentId: null } as never);
+      }
+    }
     for (const o of objects) this.removeRecursive(o);
     const survivors = this.state.groups.filter((g) => !groupIds.has(g.id));
     this.setState({
@@ -2120,6 +2278,20 @@ export class EditorController {
         survivors,
       ),
     });
+    // Read the surviving guides back rather than subtracting the deleted ones:
+    // the canvas already knows what is left, and this keeps a mixed delete of
+    // artwork and guides from having two sources of truth.
+    if (objects.some(isGuide)) {
+      const guides = guidesFromObjects(canvas.getObjects());
+      const attachments = (this.state.layout?.attachments ?? []).filter(
+        (a) => !droppedGuides.has(a.guideId),
+      );
+      const next = withLayoutMode(this.state.layout, guides);
+      this.setState({
+        layout:
+          next && attachments.length > 0 ? { ...next, attachments } : next,
+      });
+    }
     canvas.requestRenderAll();
     this.commit(
       objects.length > 1 ? "Delete objects" : "Delete object",
@@ -2449,6 +2621,154 @@ export class EditorController {
     this.commit(label);
   }
 
+  /**
+   * Edit the template's layout block.
+   *
+   * Separate from `applyToSelection` because guides and attachments are template
+   * -level facts, not per-object Fabric properties: a guide is not an object you
+   * can select, and an attachment names two things at once. Kept as one
+   * mutate-and-commit so every layout edit lands in history like any other.
+   */
+  updateLayout(
+    mutate: (layout: LayoutConfig | undefined) => LayoutConfig | undefined,
+    label = "Edit layout",
+  ): void {
+    this.setState({ layout: mutate(this.state.layout) });
+    this.commit(label);
+  }
+
+  /** Record an object's per-axis growth policy. */
+  setExpansion(
+    objectId: string,
+    expansion: ObjectExpansion | undefined,
+    label = "Expansion",
+  ): void {
+    const target = this.canvas?.getObjects().find((o) => this.getId(o) === objectId);
+    if (!target) return;
+    target.set({ expansion } as never);
+    target.setCoords();
+    this.canvas?.requestRenderAll();
+    this.commit(label);
+  }
+
+  /**
+   * Name the layout container an object belongs to, or clear it with `null`.
+   *
+   * Distinct from editor groups: this is the `layoutParentId` the solver
+   * reads, not `parentId`. Refuses self-parenting and unknown ids rather than
+   * writing a link the validator would reject on the next save.
+   */
+  setLayoutParent(objectId: string, parentId: string | null, label = "Layout parent"): void {
+    const target = this.canvas?.getObjects().find((o) => this.getId(o) === objectId);
+    if (!target) return;
+    if (parentId !== null) {
+      if (parentId === objectId) return;
+      const exists = this.canvas?.getObjects().some((o) => this.getId(o) === parentId);
+      if (!exists) return;
+    }
+    target.set({ layoutParentId: parentId } as never);
+    target.setCoords();
+    this.canvas?.requestRenderAll();
+    this.commit(label);
+  }
+
+  /** Record a child's anchor inside its layout parent. */
+  setAnchor(
+    objectId: string,
+    anchor: ChildAnchor | undefined,
+    label = "Anchor",
+  ): void {
+    const target = this.canvas?.getObjects().find((o) => this.getId(o) === objectId);
+    if (!target) return;
+    target.set({ anchor } as never);
+    target.setCoords();
+    this.canvas?.requestRenderAll();
+    this.commit(label);
+  }
+
+  /** Record a shape's opt-in container policy. */
+  setContainer(
+    objectId: string,
+    container: ContainerPolicy | undefined,
+    label = "Container",
+  ): void {
+    const target = this.canvas?.getObjects().find((o) => this.getId(o) === objectId);
+    if (!target) return;
+    target.set({ container } as never);
+    target.setCoords();
+    this.canvas?.requestRenderAll();
+    this.commit(label);
+  }
+
+  /**
+   * Candidate layout parents for the hierarchy picker: every traced object
+   * except guides, so a child can name any frame including a nested one.
+   * The picker filters out the object itself; validation rejects the rest.
+   */
+  listLayoutParents(exceptId?: string): { id: string; name: string }[] {
+    const canvas = this.canvas;
+    if (!canvas) return [];
+    const out: { id: string; name: string }[] = [];
+    for (const o of canvas.getObjects()) {
+      if (isGuide(o)) continue;
+      const id = this.getId(o);
+      if (!id || id === exceptId) continue;
+      const rec = o as unknown as { name?: unknown };
+      out.push({ id, name: typeof rec.name === "string" && rec.name ? rec.name : id });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /**
+   * Attach one edge of an object to a guide, or detach it with `null`.
+   *
+   * `behaviorOrLabel` accepts either the follow behavior or, for callers
+   * written before the behavior control existed, a history label — so an old
+   * `setAttachment(id, edge, guide, "My label")` keeps labelling history
+   * instead of being read as a behavior.
+   */
+  setAttachment(
+    objectId: string,
+    edge: AttachmentEdge,
+    guideId: string | null,
+    behaviorOrLabel: AttachmentBehavior | string = "move",
+    label = "Attachment",
+  ): void {
+    const behavior: AttachmentBehavior =
+      behaviorOrLabel === "stretch" ? "stretch" : "move";
+    const historyLabel =
+      behaviorOrLabel === "move" || behaviorOrLabel === "stretch"
+        ? label
+        : behaviorOrLabel;
+    this.updateLayout((layout) => {
+      const guides = layout?.guides ?? [];
+      // Re-targeting an edge replaces whatever it pointed at: one edge can
+      // only follow one guide, and leaving the old row behind would let the
+      // same edge be claimed twice with no way to tell which wins.
+      const others = (layout?.attachments ?? []).filter(
+        (a) => !(a.objectId === objectId && a.edge === edge),
+      );
+      const attachments = guideId
+        ? [
+            ...others,
+            {
+              id: `att-${objectId}-${edge}`,
+              objectId,
+              edge,
+              guideId,
+              behavior: behavior === "stretch" ? ("stretch" as const) : ("move" as const),
+            },
+          ]
+        : others;
+      const base = withLayoutMode(layout, guides);
+      if (!base) return undefined;
+      // No attachments left means no layout block: a template that grew a guide
+      // and then detached from it should close back up to fixed layout rather
+      // than carry an empty list that a renderer has to special-case.
+      return attachments.length > 0 ? { ...base, attachments } : undefined;
+    }, historyLabel);
+  }
+
   /** Live update during a slider drag: no history entry per frame. */
   previewSelection(fn: (o: FabricObject) => void): void {
     const objects = this.getActiveObjects();
@@ -2615,6 +2935,7 @@ export class EditorController {
       this.tracedObjects() as never,
       this.state.document,
       this.state.documentName,
+      this.state.layout,
     );
     if (this.state.placeholders.length > 0) {
       template.meta.placeholders = this.state.placeholders;
@@ -2676,15 +2997,23 @@ export class EditorController {
     }
     this.history.clear();
     canvas.discardActiveObject();
-    for (const o of this.tracedObjects()) canvas.remove(o);
+    // Everything, not just `tracedObjects()`: guides are filtered out of that
+    // list, so clearing only the artwork would leave the previous document's
+    // boundaries on the canvas behind the newly opened bill.
+    for (const o of canvas.getObjects()) canvas.remove(o);
     for (const o of hydrateTemplate(template)) canvas.add(o);
+    this.restoreGuides(template.layout?.guides ?? []);
     this.refreshStrokeFloors();
     canvas.requestRenderAll();
     this.setState({
       document: { ...template.document },
       documentName: template.meta?.name ?? "Untitled bill template",
-      placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
-      canUndo: false,
+placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
+    // Adopted from the opened file so a layout template re-opens as one. The
+    // key is left undefined for a template that never had it, which is the
+    // state that keeps a fixed-layout bill rendering as it always has.
+    layout: template.layout,
+    canUndo: false,
       canRedo: false,
       pendingTable: null,
       editingCell: null,

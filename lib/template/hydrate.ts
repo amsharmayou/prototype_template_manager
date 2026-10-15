@@ -69,6 +69,31 @@ function applyCommon<T extends FabricObject>(
     // Discriminator the serialiser relies on; see `BillTable.appType`.
     appType: o.type,
   } as never);
+  // A growth policy is metadata rather than geometry, so it rides on the Fabric
+  // object as a custom property. It has to come back here: the serialiser reads
+  // `expansion` off the canvas object, so a policy that was not restored would
+  // be dropped by the very next save - and undo restores from a serialised
+  // snapshot, so it would be lost across an undo/redo pair too.
+  const growth = (o as { expansion?: unknown }).expansion;
+  if (growth !== undefined) {
+    obj.set({ expansion: growth } as never);
+  }
+  // Layout membership rides the same way: without it a reopened template
+  // would keep its containers but lose which children belong to them, and the
+  // next save would write a template whose hierarchy no longer matches its
+  // frames. `parentId` (groups) is untouched — the two relations coexist.
+  const layoutParentId = (o as { layoutParentId?: unknown }).layoutParentId;
+  if (typeof layoutParentId === "string" && layoutParentId.length > 0) {
+    obj.set({ layoutParentId } as never);
+  }
+  const anchor = (o as { anchor?: unknown }).anchor;
+  if (anchor !== undefined) {
+    obj.set({ anchor } as never);
+  }
+  const container = (o as { container?: unknown }).container;
+  if (container !== undefined) {
+    obj.set({ container } as never);
+  }
   if (o.locked) {
     (obj as { lockMovementX?: boolean }).lockMovementX = true;
     (obj as { lockMovementY?: boolean }).lockMovementY = true;

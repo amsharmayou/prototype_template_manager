@@ -15,13 +15,19 @@ import {
   TextInput,
 } from "@/components/ui/Controls";
 import { BillTable } from "@/lib/canvas/objects/BillTable";
+import LayoutPanels from "@/components/editor/LayoutPanel";
 import type { EditorController, EditorState } from "@/lib/canvas/EditorController";
 import {
   acceptsSharedPaint,
   sharedSelection,
 } from "@/lib/canvas/sharedSelection";
 import { SUGGESTED_VARIABLES, toToken } from "@/lib/template/placeholders";
-import type { TemplateObject } from "@/lib/template/types";
+import type {
+  ChildAnchor,
+  ContainerPolicy,
+  ObjectExpansion,
+  TemplateObject,
+} from "@/lib/template/types";
 
 const FONTS = [
   { value: "Arial", label: "Arial" },
@@ -331,6 +337,22 @@ function SinglePanel({
           </Button>
         </div>
       </Panel>
+
+      <LayoutPanels
+        controller={controller}
+        state={state}
+        objectId={o.id}
+        expansion={
+          (o as unknown as { expansion?: ObjectExpansion }).expansion
+        }
+        objectType={o.type}
+        layoutParentId={
+          (o as unknown as { layoutParentId?: string | null }).layoutParentId ?? null
+        }
+        anchor={(o as unknown as { anchor?: ChildAnchor }).anchor}
+        container={(o as unknown as { container?: ContainerPolicy }).container}
+        parents={controller.listLayoutParents(o.id)}
+      />
 
       <p className="px-3 py-2 text-[10px] text-neutral-400">
         {state.selection.length} selected

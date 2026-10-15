@@ -5,6 +5,8 @@ import { TOOL_LABELS } from "@/lib/canvas/EditorController";
 
 const TOOL_ICONS: Record<ToolId, string> = {
   select: "▸",
+  "guide-h": "─",
+  "guide-v": "│",
   line: "╱",
   rect: "▭",
   "rounded-rect": "▢",
@@ -23,6 +25,8 @@ const TOOL_ICONS: Record<ToolId, string> = {
 
 const ORDER: ToolId[] = [
   "select",
+  "guide-h",
+  "guide-v",
   "line",
   "hr",
   "vr",

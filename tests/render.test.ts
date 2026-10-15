@@ -565,17 +565,31 @@ it("returns null for a freehand stroke carrying the pre-fix empty path", () => {
   expect(renderObject({ ...base, type: "freehand", path: "" } as never, 0, {}, r)).toBeNull();
 });
 
-it("centres an image placeholder label and escapes it", () => {
+it("centres an image placeholder label and escapes it, when placeholders are shown", () => {
   const r = new Refusals();
   const out = renderObject({
     ...base,
     type: "image-placeholder",
     placeholderRole: "logo",
     label: "<b>LOGO</b>",
-  } as never, 0, {}, r)!;
+  } as never, 0, {}, r, "show")!;
   expect(out).toContain('class="o ph"');
   expect(out).toContain("&lt;b&gt;LOGO&lt;/b&gt;");
   expect(out).not.toContain("<b>");
+});
+
+it("draws nothing for an unbound image placeholder when placeholders are hidden", () => {
+  // The default: an empty slot on a finished bill is a gap, not a dashed box
+  // telling the reader to supply an image.
+  const r = new Refusals();
+  expect(
+    renderObject({
+      ...base,
+      type: "image-placeholder",
+      placeholderRole: "logo",
+      label: "<b>LOGO</b>",
+    } as never, 0, {}, r),
+  ).toBeNull();
 });
 
 it("escapes the style attribute so a quoted family cannot end it", () => {
@@ -1268,18 +1282,16 @@ const sourcesIn = (root: string) =>
     .map((f) => ({ file: f, src: readFileSync(join(root, f), "utf8") }));
 
 describe("purity of lib/render", () => {
-  // `sha256.ts` and `values.ts` are one-line re-export shims over
-  // `billkit-format`; their real bodies are guarded by that package's own
-  // purity suite. Scanning a shim would pass while checking nothing.
+  // `sha256.ts` and `values.ts` used to be one-line re-export shims over the
+  // retired `shared/billkit-format` package and were excluded from this scan;
+  // they are real sources now, guarded here like the rest of the renderer.
   const dir = join(__dirname, "..", "lib", "render");
-  const SHIMMED = new Set(["sha256.ts", "values.ts"]);
-  const sources = () =>
-    sourcesIn(dir).filter(({ file }) => !SHIMMED.has(file.split("\\").pop() ?? file.split("/").pop() ?? ""));
+  const sources = () => sourcesIn(dir);
 
   it("imports no engine, no UI and nothing impure", () => {
     // Non-vacuity first, in this same test so the file count stays where it is.
-    // The filter above can be left matching nothing - a moved directory, a
-    // renamed shim - and the loop below would then pass while checking nothing.
+    // The directory can be moved or renamed and the loop below would then pass
+    // while checking nothing.
     const files = sources().map((s) => s.file);
     expect({
       scanned: files.length,
@@ -1331,16 +1343,30 @@ describe("purity of lib/render", () => {
 
 describe("purity of lib/billkit", () => {
   const dir = join(__dirname, "..", "lib", "billkit");
-  /**
-   * `main.ts` is the one file allowed to touch `window`: it is the platform
-   * shim that hangs the bridge on the host's global. Everything a host actually
-   * calls — the bridge — is held to the same standard as the renderer, because
-   * an impure bridge is a bundle that only runs in a browser.
+/**
+   * Two files are allowed to touch the DOM, and both are shims rather than
+   * logic: `main.ts` hangs the bridge on the host's global, and
+   * `measure-dom.ts` is the only place sizing text against a real font engine
+   * can happen. Everything a host actually calls - the bridge - is held to the
+   * same standard as the renderer, because an impure bridge is a bundle that
+   * only runs in a browser.
+   *
+   * The exemption is an explicit list rather than a rule, so adding a third
+   * file that reaches for `document` fails this suite instead of quietly
+   * joining the exclusion.
    */
-  const sources = () => sourcesIn(dir).filter((s) => s.file !== "main.ts");
+  const SHIMMED = new Set(["main.ts", "measure-dom.ts"]);
+  const sources = () => sourcesIn(dir).filter((s) => !SHIMMED.has(s.file));
 
-  it("scans more than the platform shim", () => {
+  it("scans more than the platform shims", () => {
     expect(sources().map((s) => s.file)).toContain("bridge.ts");
+  });
+
+  it("exempts exactly the shims, and nothing else", () => {
+    // If this ever drifts from the list above the guard is only pretending.
+    const all = sourcesIn(dir).map((s) => s.file);
+    expect(all.filter((f) => !SHIMMED.has(f)).length).toBeGreaterThan(0);
+    expect(SHIMMED.size).toBe(all.length - (all.length - SHIMMED.size));
   });
 
   it("imports no engine, no UI and nothing impure", () => {

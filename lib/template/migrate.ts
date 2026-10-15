@@ -3,6 +3,7 @@ import {
   A4_WIDTH,
   TEMPLATE_VERSION,
   type BillTemplate,
+  type LayoutConfig,
   type PlaceholderSpec,
   type TemplateObject,
 } from "@/lib/template/types";
@@ -80,6 +81,17 @@ export function migrateTemplate(raw: unknown): { template: BillTemplate; notes: 
     ? (rawPlaceholders as PlaceholderSpec[])
     : undefined;
 
+  // Carried through rather than rebuilt, for the same reason `meta` is: the
+  // return value below is a fresh literal listing the fields this function
+  // repairs, so anything not named here is discarded. A template that had its
+  // layout rules stripped on load would render as fixed geometry with no error,
+  // which is the hardest kind of data loss to notice. Absent stays absent - that
+  // is the whole signal a renderer has for "this template is a fixed-layout one".
+  const layout =
+    typeof root.layout === "object" && root.layout !== null
+      ? (root.layout as LayoutConfig)
+      : undefined;
+
   return {
     template: {
       templateVersion: TEMPLATE_VERSION,
@@ -95,6 +107,7 @@ export function migrateTemplate(raw: unknown): { template: BillTemplate; notes: 
         ...(placeholders === undefined ? {} : { placeholders }),
       },
       objects,
+      ...(layout === undefined ? {} : { layout }),
     },
     notes,
   };
