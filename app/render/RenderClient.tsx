@@ -6,7 +6,7 @@ import { useMemo, useRef, useState } from "react";
 import DynamicForm from "@/components/render/DynamicForm";
 import { deriveForm } from "@/lib/package/form";
 import { PACKAGE_VERSION } from "@/lib/package/format";
-import type { PackageManifest } from "@/lib/package/format";
+import type { ComputedSpec, PackageManifest } from "@/lib/package/format";
 import { Button } from "@/components/ui/Controls";
 import { exportPdf } from "@/lib/export/toPdf";
 import { downloadText, safeFilename } from "@/lib/export/download";
@@ -16,6 +16,8 @@ import {
   type TemplateField,
 } from "@/lib/template/dataBinding";
 import { renderHtml } from "@/lib/render";
+import { measureBridge } from "@/lib/billkit/bridge";
+import { measureDom } from "@/lib/billkit/measure-dom";
 import { CHECKED_MARK } from "@/lib/share/kit";
 import {
   consumePendingTemplate,
@@ -32,6 +34,16 @@ import type { BillTemplate } from "@/lib/template/types";
  * placeholders; this page derives a form from it, collects values, and
  * renders the final document  for preview, PDF download or print.
  */
+/**
+ * No computed specs on this page.
+ *
+ * Computed totals live in a package manifest, and this page loads bare
+ * template JSON - so there are none to apply. Held as a stable constant rather
+ * than a fresh `[]` on every render so it cannot become a `useMemo` dependency
+ * that changes identity each pass.
+ */
+const NO_COMPUTED: ComputedSpec[] = [];
+
 export default function RenderClient() {
   // The page is client-only (ssr: false via next/dynamic), so browser storage
   // is readable in initialisers. The editor handoff wins over the library.
@@ -54,6 +66,11 @@ export default function RenderClient() {
   const fields: TemplateField[] = useMemo(
     () => (template ? extractTemplateFields(template) : []),
     [template],
+  );
+
+  const filled = useMemo(
+    () => (template ? fillTemplate(template, values) : null),
+    [template, values],
   );
 
   const schema = useMemo(() => {
@@ -80,15 +97,50 @@ export default function RenderClient() {
     return deriveForm(manifest, template);
   }, [template]);
 
-  const filled = useMemo(
-    () => (template ? fillTemplate(template, values) : null),
-    [template, values],
-  );
+  /**
+   * Measure, then render.
+   *
+   * The same two steps `WebViewBillKitRuntime` takes on Android, in the same
+   * order and through the same two functions. Without this the preview is a
+   * different renderer from the one the app uses, and a variable-layout bill
+   * grows on the device but not here - so what an author checks in the preview
+   * is not what their customer sees.
+   *
+   * Both halves are pure, so this runs in a `useMemo` without an effect: the
+   * measurement is a synchronous DOM read of detached elements, which is why
+   * the render stays a plain function of state.
+   */
+  const rendered = useMemo(() => {
+    if (!filled || !template) return null;
+    const plan = measureBridge(
+      JSON.stringify(filled),
+      JSON.stringify(values),
+      JSON.stringify(NO_COMPUTED),
+    );
+    const measurements = measureDom(plan);
+    // A field the solver widened is measured again at its new width, so the
+    // height it is painted with is the wrapped height at that width rather than
+    // the upper bound measured at the base width.
+    const remeasure = (id: string, width: number) => {
+      const request = plan.find((r) => r.id === id);
+      if (!request) return undefined;
+      return measureDom([{ ...request, width }])[id];
+    };
+    return renderHtml(filled, values, { measurements, remeasure });
+  }, [filled, values, template]);
 
-  const rendered = useMemo(
-    () => (filled ? renderHtml(filled, values) : null),
-    [filled, values],
-  );
+  const renderedTemplate = useMemo(() => {
+    if (!filled || !rendered?.objects?.length) return filled;
+    return {
+      ...filled,
+      objects: rendered.objects,
+      document: {
+        ...filled.document,
+        width: rendered.page.width,
+        height: rendered.page.height,
+      },
+    };
+  }, [filled, template, rendered]);
 
   const setValue = (key: string, value: string) => {
     setValues((v) => ({ ...v, [key]: value }));
@@ -149,7 +201,7 @@ export default function RenderClient() {
     setBusy("pdf");
     setError(null);
     try {
-      await exportPdf(filled);
+      await exportPdf(renderedTemplate ?? filled ?? template, rendered?.page);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -369,8 +421,8 @@ export default function RenderClient() {
                 title="Rendered document preview"
                 className="bg-white"
                 style={{
-                  width: template.document.width,
-                  height: template.document.height,
+                  width: rendered?.page.width ?? template.document.width,
+                  height: rendered?.page.height ?? template.document.height,
                 }}
                 srcDoc={rendered?.html ?? ""}
               />

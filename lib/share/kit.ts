@@ -1,5 +1,7 @@
 import { extractTemplateFields, fillTemplate } from "@/lib/template/dataBinding";
 import { renderHtml } from "@/lib/render";
+import { measureBridge } from "@/lib/billkit/bridge";
+import { measureDom } from "@/lib/billkit/measure-dom";
 import type { BillTemplate } from "@/lib/template/types";
 
 /**
@@ -253,7 +255,24 @@ export function bootShareKit(
       // leaving it visible as `{{key}}` for whoever fills the form next.
       if (value !== "") values[named.name] = value;
     }
-    const rendered = renderHtml(fillTemplate(template, values));
+    // Measure before rendering, exactly as the app and the preview page do.
+    //
+    // Without this the shared page is a third renderer, disagreeing with both:
+    // a variable-layout bill grows in the app and in the editor's preview but
+    // not in the page an author sends to a customer, which is precisely the
+    // artefact nobody is checking.
+    const filled = fillTemplate(template, values);
+    const plan = measureBridge(JSON.stringify(filled), JSON.stringify(values));
+    const measurements = measureDom(plan);
+    // Same second measurement pass the app performs: a field the solver widened
+    // is measured again at its final width, so a shared page shows the height
+    // the text is really painted at.
+    const remeasure = (id: string, width: number) => {
+      const request = plan.find((r) => r.id === id);
+      if (!request) return undefined;
+      return measureDom([{ ...request, width }])[id];
+    };
+    const rendered = renderHtml(filled, undefined, { measurements, remeasure });
     preview.srcdoc = rendered.html;
     const missing = rendered.variables.filter((v) => !(v in values) || !values[v]);
     status.textContent = missing.length

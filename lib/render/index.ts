@@ -12,8 +12,11 @@ import { canonicalJson } from "./canonical";
 import { computeAll } from "./computed";
 import { Refusals, safeLength, type Refusal } from "./css";
 import { attr, escapeHtml } from "./escape";
+import { calculateLayout } from "./layout";
+import type { ContentMeasurement } from "./measure";
 import { renderObject } from "./primitives";
 import { expandRepeats } from "./repeat";
+import { applyRowHeights, rowsWorthMeasuring } from "./rowHeights";
 import { sha256Hex } from "./sha256";
 import { stylesheet } from "./style";
 import type { Values } from "./values";
@@ -26,6 +29,42 @@ export interface RenderOptions {
   computed?: readonly ComputedSpec[];
   /** Decimal places money is held in. Defaults to 2. */
   currencyScale?: number;
+  /**
+   * Whether an unfilled slot is painted at all.
+   *
+   * `"hide"` (the default) is what a document wants: a `{{token}}` with no
+   * value contributes nothing, and an image slot with no image is not drawn as
+   * a dashed box. The author drew those marks for the editor, where they say
+   * "put something here"; on paper they are a printing instruction the reader
+   * cannot act on.
+   *
+   * `"show"` keeps them, which is what the editor and a debugging pass want -
+   * a half-filled document is then legible as "these three are still missing"
+   * rather than as three inexplicable gaps.
+   */
+  placeholders?: "hide" | "show";
+  /**
+   * What each growing slot's content needs, keyed by object id.
+   *
+   * Supplied by the host because measuring needs a font engine, and this
+   * renderer has no DOM: the browser measures on web and the WebView measures
+   * on Android. Omit it and every object keeps its authored geometry, so a
+   * layout template still renders - as a fixed one.
+   */
+  measurements?: Readonly<Record<string, ContentMeasurement>>;
+  /**
+   * Re-measure a slot at the width the solver gave it, when it changed.
+   *
+   * A height measured at the base width is an upper bound for any wider box -
+   * widening can only reduce the wrapped line count - so one pass is safe. It is
+   * not *accurate*: a field that widens a long line is still sized for the
+   * wrapped-out version. A host with a font engine (the browser, the WebView)
+   * passes this so the height settles at the width the text will be painted at.
+   *
+   * Returning `undefined` means "no better number", and the original
+   * measurement is kept. Never called for a box whose width did not change.
+   */
+  remeasure?: (id: string, width: number) => ContentMeasurement | undefined;
 }
 
 export interface RenderResult {
@@ -33,6 +72,22 @@ export interface RenderResult {
   refusals: Refusal[];
   variables: string[];
   warnings: string[];
+  /**
+   * Template carrying the geometry the document was actually drawn with,
+   * so exporters can emit what the preview shows rather than guessing from
+   * the authored template.
+   */
+  objects: TemplateObject[];
+  /**
+   * The page as it was actually drawn.
+   *
+   * Not always the authored size: a variable-layout document may have grown
+   * to fit its content. A caller printing or exporting needs *these* numbers
+   * - sizing a PDF from `template.document` would clip a receipt whose rows
+   * pushed the bottom off the authored sheet, which is the one failure a
+   * customer would actually notice.
+   */
+  page: { width: number; height: number };
 }
 
 /**
@@ -155,16 +210,99 @@ export function renderHtml(
     ...computeAll(options.computed ?? [], values, options.currencyScale ?? 2),
   };
 
-  const { objects: expanded, warnings } = expandRepeats(objects, enriched, height);
+  const { objects: expanded0, warnings: repeatWarnings } = expandRepeats(objects, enriched, height);
 
-  // The array index breaks zIndex ties, so objects that share a zIndex keep
-  // their order from one run to the next.
-  const ordered = expanded
+  // Variable rows, immediately after the band has been expanded and before
+  // anything is measured against or solved for.
+  //
+  // The order is forced. Row heights are indexed against the expanded cell
+  // array, so they cannot be decided before [expandRepeats] has run; and they
+  // must be settled before [calculateLayout], because a guide below the table
+  // is moved by the table's final height, not by the traced one.
+  const measurements = options.measurements ?? {};
+  const expanded = expanded0.map((o) => {
+    if (o.type !== "table") return o;
+    const policy = rowsWorthMeasuring(o);
+    if (!policy) return o;
+    return applyRowHeights(o, measurements, {
+      ...(policy.maxGrowth !== undefined ? { maxGrowth: policy.maxGrowth } : {}),
+    });
+  });
+
+  // Variable layout, after repeats and before anything is sorted or painted.
+  //
+  // Both sides of this are load-bearing. It has to follow repeat expansion
+  // because the row count decides how much room the band needs, and it has to
+  // precede the sort because that is the last point at which final geometry is
+  // known and nothing has been written yet.
+  //
+  // Skipped entirely unless the template opted in, so a template without a
+  // `layout` block takes the same path it always did.
+  const layoutRules = template.layout;
+  const layoutMeasurements: Record<string, ContentMeasurement> = { ...measurements };
+  for (const o of expanded) {
+    if (o.type !== "table") continue;
+    if (!rowsWorthMeasuring(o)) continue;
+    layoutMeasurements[o.id] = {
+      naturalWidth: o.width,
+      height: o.height,
+    };
+  }
+
+  const solve = (m: Readonly<Record<string, ContentMeasurement>>) =>
+    calculateLayout({
+      objects: expanded,
+      measurements: m,
+      guides: layoutRules?.guides ?? [],
+      attachments: layoutRules?.attachments ?? [],
+      documentPolicy: layoutRules?.document ?? { growthX: "fixed", growthY: "fixed" },
+      document: { width, height },
+      ...(layoutRules?.collision !== undefined ? { collision: layoutRules.collision } : {}),
+    });
+
+  let geometry = layoutRules && layoutRules.mode === "variable" ? solve(layoutMeasurements) : null;
+
+  // One re-solve when X growth widened a box, because text measured at the base
+  // width is an upper bound for the field's content and not the height the field
+  // will actually be painted at: widening a box can only reduce the number of
+  // wrapped lines. A host with a font engine passes `remeasure` to settle it.
+  //
+  // Bounded to a single extra pass, and only for boxes that really changed
+  // width, so a pathological template cannot spin the preview. Without a
+  // `remeasure` function the first solve stands - safe, because an upper bound
+  // never under-allocates.
+  if (geometry && options.remeasure) {
+    const widened = geometry.objects.filter((o) => {
+      const authored = expanded.find((a) => a.id === o.id);
+      return authored !== undefined && Math.abs(authored.width - o.width) > 1;
+    });
+    if (widened.length > 0) {
+      const refined = { ...layoutMeasurements };
+      let improved = false;
+      for (const o of widened) {
+        const better = options.remeasure(o.id, o.width);
+        if (better && Number.isFinite(better.height) && Number.isFinite(better.naturalWidth)) {
+          refined[o.id] = better;
+          improved = true;
+        }
+      }
+      if (improved) geometry = solve(refined);
+    }
+  }
+
+  const placed = geometry ? geometry.objects : expanded;
+  const pageWidth = geometry ? geometry.page.width : width;
+  const pageHeight = geometry ? geometry.page.height : height;
+
+  // Ordered by z-index as today; layout only moves things, it never repaints
+  // them in a different order.
+  const ordered = placed
     .map((o, i) => ({ o, i }))
     .sort((a, b) => a.o.zIndex - b.o.zIndex || a.i - b.i);
 
+  const placeholders = options.placeholders ?? "hide";
   const body = ordered
-    .map(({ o, i }) => renderObject(o, i, enriched, refusals))
+    .map(({ o, i }) => renderObject(o, i, enriched, refusals, placeholders))
     .filter((s): s is string => typeof s === "string")
     .join("\n");
 
@@ -182,7 +320,7 @@ export function renderHtml(
   const html =
     `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n` +
     `<title>${title}</title>\n` +
-    `<style>\n${stylesheet(width, height)}\n</style>\n</head>\n<body>\n` +
+    `<style>\n${stylesheet(pageWidth, pageHeight)}\n</style>\n</head>\n<body>\n` +
     `<div class="sheet" data-template-version="${attr(String(version))}" ` +
     `data-template-hash="${hash}">\n${body}\n</div>\n</body>\n</html>\n`;
 
@@ -190,16 +328,31 @@ export function renderHtml(
   // arrive through an unvalidated cast, so a cell or object `text` may be a
   // number or null, and `collectDocumentVariables` calls `matchAll` on what it
   // is handed - which throws rather than rendering an empty cell.
-  const texts = objects.flatMap((o) =>
+const texts = objects.flatMap((o) =>
     o.type === "table"
       ? (Array.isArray(o.cells) ? o.cells : []).map((c) => c?.text)
-      : o.type === "text"
-        ? [o.text]
-        : [],
+      // `field` carries its token in the same `text` property as `text` does.
+      // Leaving it out here reported a document with field placeholders as
+      // having nothing outstanding, so a host had no way to tell the user which
+      // were still blank.
+      : o.type === "text" || o.type === "field"
+      ? [o.text]
+      : [],
   );
   const variables = collectDocumentVariables(
     texts.filter((t): t is string => typeof t === "string"),
   );
 
-  return { html, refusals: refusals.list(), variables, warnings };
+  // Layout diagnostics ride in the same array as repeat warnings: both are
+  // "the document is still printable, but here is what you should know", and a
+  // caller reading one list should not have to know which pass produced an
+  // entry. Repeat warnings come first so their order does not shift.
+return {
+      html,
+      refusals: refusals.list(),
+      variables,
+      warnings: [...repeatWarnings, ...(geometry?.diagnostics ?? [])],
+      objects: placed.map((o) => ({ ...o })),
+      page: { width: pageWidth, height: pageHeight },
+    };
 }
