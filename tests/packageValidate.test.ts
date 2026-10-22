@@ -194,9 +194,10 @@ describe("validatePackage", () => {
   });
 
   it("rejects a dotted repeat column on an op that has no meaning for one", () => {
-    // `sum` adds a column across rows and `sum-times` multiplies two per row.
-    // For every other op a dotted arg is a request the evaluator cannot honour:
-    // it reads args as whole names, so `items.qty` validated and then computed 0.
+    // `sum` adds a column across rows, `sum-times` multiplies two per row, and
+    // `percent`, `round-off` and `in-words` read a column as its summed base.
+    // Every other op reads args as whole names, so `items.qty` validated and
+    // then computed 0.
     const fields: PackageManifest["fields"] = [
       {
         key: "items",
@@ -215,17 +216,20 @@ describe("validatePackage", () => {
       expect(at!.message).toContain("items.qty");
     }
 
+    // Percent reads a dotted column as the summed base, which is what a
+    // document-level percentage of the line figures means.
     const pct = pkg({
       fields,
       computed: [{ key: "t", op: "percent", args: ["items.qty"], rateKey: "rate" }],
     });
-    const atRate = errorAt(pct, "computed[0].args[0]");
-    expect(atRate).toBeDefined();
-    expect(atRate!.message).toContain("percent");
-    expect(atRate!.message).toContain("items.qty");
+    expect(errorAt(pct, "computed[0].args[0]")).toBeUndefined();
   });
 
-  it("rejects a dotted repeat column as a rate, which resolves like an arg", () => {
+  it("accepts a per-row dotted rate on percent", () => {
+    // Each row inside a band evaluation reads its own rate, so a dotted
+    // rateKey names a meaningful thing: the tax line that belongs to the row
+    // printing it. The evaluator falls back to a flat value of the same name
+    // at the document level, where no rows are in scope.
     const fields: PackageManifest["fields"] = [
       {
         key: "items",
@@ -240,9 +244,7 @@ describe("validatePackage", () => {
       fields,
       computed: [{ key: "t", op: "percent", args: ["subtotal"], rateKey: "items.rate" }],
     });
-    const at = errorAt(p, "computed[0].rateKey");
-    expect(at).toBeDefined();
-    expect(at!.message).toContain("items.rate");
+    expect(errorAt(p, "computed[0].rateKey")).toBeUndefined();
   });
 
   it("still accepts a dotted column on sum and sum-times", () => {

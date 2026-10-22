@@ -50,16 +50,27 @@ const FIELD_SOURCES = new Set(["text", "table", "image-placeholder", "field"]);
 
 const ASSET_ROLES = new Set(["bill-part", "image-placeholder"]);
 
-const COMPUTED_OPS = new Set(["sum", "sum-times", "add", "subtract", "multiply", "percent"]);
+const COMPUTED_OPS = new Set([
+  "sum",
+  "sum-times",
+  "add",
+  "subtract",
+  "multiply",
+  "percent",
+  "in-words",
+  "round-off",
+]);
 
 /**
- * The only two ops with a defined meaning for a repeat column: `sum` adds one
- * across rows, `sum-times` multiplies two per row. A dotted arg on any other op
- * is a request the evaluator cannot honour -- it reads args as whole names --
- * so it is refused here, where the mistake is visible, rather than quietly
- * computing zero where it is not.
+ * Ops with a defined meaning for a repeat column: `sum` adds one across rows,
+ * `sum-times` multiplies two per row, and `percent`, `round-off` and
+ * `in-words` read the column's summed base (the document-level figure a
+ * derived line standoffs against). A dotted arg on any other op is a request
+ * the evaluator cannot honour -- it reads args as whole names -- so it is
+ * refused here, where the mistake is visible, rather than quietly computing
+ * zero where it is not.
  */
-const COLUMN_OPS = new Set(["sum", "sum-times"]);
+const COLUMN_OPS = new Set(["sum", "sum-times", "percent", "round-off", "in-words"]);
 
 /** Repeat field key -> the column names it declares. Resolution needs this map. */
 type RepeatColumns = Map<ManifestField["key"], NonNullable<ManifestField["columns"]>>;
@@ -193,9 +204,9 @@ function resolvesAsColumn(
 /** Names the op and the reference, because a bare "not allowed" is not a diagnosis. */
 function columnArgMessage(op: string, name: string, label: string): string {
   return (
-    `${label} ${name}: op "${op}" has no meaning for a repeat column; ` +
-    `only "sum" and "sum-times" read one. ` +
-    `Sum the column into a key of its own and combine that instead`
+    `${label} ${name}: op "${op}" reads a repeat column only as its summed base (` +
+    `or row by row for "sum" and "sum-times"); most other ops have no meaning ` +
+    `for a column at all. Sum the column into a key of its own and combine that instead`
   );
 }
 
@@ -660,6 +671,12 @@ export function validateManifest(
     }
     if (typeof c.op !== "string" || !COMPUTED_OPS.has(c.op)) {
       out.push(issue(`computed[${i}].op`, `unknown computed op ${String(c.op)}`));
+    }
+    if (c.roundTo !== undefined) {
+      const rt = c.roundTo;
+      if (typeof rt !== "number" || !Number.isInteger(rt) || rt < 0 || rt > 6) {
+        out.push(issue(`computed[${i}].roundTo`, "roundTo must be an integer from 0 to 6"));
+      }
     }
     if (!Array.isArray(c.args) || c.args.some((a) => typeof a !== "string")) {
       out.push(issue(`computed[${i}].args`, "computed args must all be strings"));

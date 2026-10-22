@@ -1,4 +1,4 @@
-﻿import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -136,5 +136,31 @@ describe("body corpus", () => {
       o.type === "text" ? (o as unknown as { text: string }).text : "",
     );
     expect(page3Texts.some((t) => t.includes("TOTAL"))).toBe(true);
+  });
+
+  it("the trade tax invoice prints per-row rates, a round-off line and words", () => {
+    const template = JSON.parse(
+      readFileSync(join(dir, "trade-tax-invoice.template.json"), "utf8"),
+    ) as BillTemplate;
+    const values = JSON.parse(
+      readFileSync(join(dir, "trade-tax-invoice.values.json"), "utf8"),
+    ) as Record<string, string>;
+    const computed = computedSpecsFor(template);
+    const { html } = renderDocument(template, values, {
+      computed,
+      display: displayMapFor(template),
+    });
+    // Two rows at 18% and 12%, one fractional-count row at 5%: each row's tax
+    // uses its own rate, and the summary sums the per-row results.
+    expect(html).toContain("100.28");
+    expect(html).toContain("305.01");
+    // 2100.28 + 305.01 = 2405.29; the round-off line carries it to 2406.00.
+    expect(html).toContain("2,405.29");
+    expect(html).toContain("-0.29");
+    // `payable` has no money-shaped key, so it prints without grouping; the
+    // declared display map is what turns that on per field.
+    expect(html).toContain("2405.00");
+    // The words line spells the payable figure.
+    expect(html).toContain("Two Thousand Four Hundred Five Rupees Only");
   });
 });

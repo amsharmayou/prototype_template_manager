@@ -555,6 +555,19 @@ export function renderObject(
   r: Refusals,
   placeholders: PlaceholderMode = "hide",
 ): string | null {
+  // A conditional block paints only when the form's value satisfies it. The
+  // condition reads the *resolved* values (computed lines included), so a
+  // block can key off a derived figure exactly as it keys off a typed field.
+  // An absent value is an absent block: that is the entire point of the
+  // feature - an advisory line that is part of the story only when the thing
+  // it talks about happened.
+  const when = o.visibleWhen;
+  if (when !== undefined && typeof when === "object" && typeof when.key === "string") {
+    const value = values[when.key];
+    const present = typeof value === "string" && value.trim().length > 0;
+    const ok = present && (when.equals === undefined || value === when.equals);
+    if (!ok) return null;
+  }
   // The switch below covers every member of the union, so TypeScript treats the
   // implicit end as unreachable and never asks for a default. A template that
   // arrives through an unvalidated cast can still carry a type this renderer

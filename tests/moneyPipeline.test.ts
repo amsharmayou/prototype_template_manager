@@ -1,6 +1,6 @@
-import { expect, it, describe } from "vitest";
+﻿import { expect, it, describe } from "vitest";
 
-import { computeAll, withRowsComputed } from "@/lib/render/computed";
+import { bandRowValues, computeAll, withRowsComputed } from "@/lib/render/computed";
 import { expandRepeats } from "@/lib/render/repeat";
 import { applyDisplayFormats } from "@/lib/render/formats";
 import type { ComputedSpec } from "@/lib/package/format";
@@ -106,6 +106,62 @@ describe("band rows inside expansion", () => {
     });
     const cells = (objects[0] as { cells: Array<{ text: string }> }).cells;
     expect(cells.map((c) => c.text)).toEqual(["0.125", "68.78", "550.25", "68.78"]);
+  });
+});
+
+describe("per-row rates and rounding ops", () => {
+  const LINE: ComputedSpec = { key: "line", op: "sum-times", args: ["rows.qty", "rows.rate"] };
+  const LINE_TAX: ComputedSpec = { key: "line_tax", op: "percent", args: ["rows.line"], rateKey: "rows.gst_rate" };
+  const TAX_SUM: ComputedSpec = { key: "tax_total", op: "sum", args: ["rows.line_tax"] };
+
+  it("taxes each row at the rate printed beside it", () => {
+    const values = {
+      rows: rowsJson([
+        { qty: "2", rate: "100.00", gst_rate: "18" },
+        { qty: "1", rate: "100.00", gst_rate: "5" },
+      ]),
+    };
+    const row0 = bandRowValues([LINE, LINE_TAX], "rows", JSON.parse(values.rows)[0]!, values, 2, { qtyScale: 6 });
+    const row1 = bandRowValues([LINE, LINE_TAX], "rows", JSON.parse(values.rows)[1]!, values, 2, { qtyScale: 6 });
+    // 200 at 18 percent is 36; 100 at 5 percent is 5: the rates are per row.
+    expect(row0.line_tax).toBe("36.00");
+    expect(row1.line_tax).toBe("5.00");
+    // The aggregate reads the same per-row figures, not one flat rate.
+    const augmented = withRowsComputed(
+      { objects: [{ type: "table", repeat: { key: "rows" } }] },
+      [LINE, LINE_TAX, TAX_SUM],
+      values,
+      2,
+      { qtyScale: 6 },
+    );
+    const out = computeAll([TAX_SUM], augmented, 2, { qtyScale: 6 });
+    expect(out.tax_total).toBe("41.00");
+  });
+
+  it("publishes the gap to a round figure as its own line", () => {
+    const grand: ComputedSpec = { key: "grand", op: "add", args: ["subtotal"] };
+    const spec: ComputedSpec = { key: "round_off", op: "round-off", args: ["grand"], roundTo: 0 };
+    const values = { subtotal: "3510.62" };
+    const out = computeAll([grand, spec], values, 2);
+    expect(out.grand).toBe("3510.62");
+    // The payer is asked for the 38 paise that carries the bill to a whole
+    // rupee, and the words line disagrees with nothing.
+    expect(out.round_off).toBe("0.38");
+  });
+
+  it("publishes the spelled words for a figure", () => {
+    const spec: ComputedSpec = { key: "in_words", op: "in-words", args: ["grand"] };
+    const out = computeAll(
+      [
+        { key: "grand", op: "add", args: ["subtotal"] },
+        spec,
+      ],
+      { subtotal: "123456.75" },
+      2,
+    );
+    expect(out.in_words).toBe(
+      "One Lakh Twenty Three Thousand Four Hundred Fifty Six Rupees Seventy Five Paise Only",
+    );
   });
 });
 

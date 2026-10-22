@@ -128,7 +128,11 @@ export type ComputedOp =
   | "add"
   | "subtract"
   | "multiply"
-  | "percent";
+  | "percent"
+  /** Spelled-out words for the operand, in the Indian numbering system. */
+  | "in-words"
+  /** The gap between the operand and itself rounded to `roundTo` decimals. */
+  | "round-off";
 
 /**
  * One derived value.
@@ -160,6 +164,12 @@ export interface ComputedSpec {
   args: string[];
   /** Read by `percent`; the percentage rate. Resolved the same way as an arg. */
   rateKey?: string;
+  /**
+   * Read by `round-off`: the decimal places the operand is rounded to before
+   * the difference is reported. `0` - the default - carries a whole-unit
+   * round-off line; a scale cap of the document's own currency scale applies.
+   */
+  roundTo?: number;
 }
 
 export interface PackageManifest {

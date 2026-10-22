@@ -402,11 +402,101 @@ console.log(`corpus written: ${fixtures.length} templates in ${dir}`);
 
 // (Writer second pass: appended fixtures above must reach disk too.)
 {
+
+  // 14. Trade tax: per-line tax rates, a round-off line and spelled words.
+  // The per-row `gst` column proves percent-with-per-row-rate: each row is
+  // taxed at the rate printed beside it, the rows are summed, the round-off
+  // carries the bill to a whole rupee, and the words line spells it.
+  const template = emptyTemplate(794, 1123, "Trade tax invoice");
+  const cells: NonNullable<TableObject["cells"]> = [];
+  const heads = ["Qty", "Description", "Rate", "Line"];
+  const width = 4;
+  const tracedRows = 2;
+  for (let r = 0; r < tracedRows; r += 1) {
+    for (let c = 0; c < width; c += 1) {
+      cells.push({
+        text: r === 0 ? heads[c]! : c === 0 ? "{{items.qty}}" : c === 1 ? "{{items.description}}" : c === 2 ? "{{items.rate}}" : "{{line}}",
+        textAlign: c >= 2 ? "right" : "left",
+        fontSize: 11,
+        fontWeight: r === 0 ? "bold" : "normal",
+      } as never);
+    }
+  }
+  template.objects = [
+    ...headerBlocks("TAX INVOICE"),
+    {
+      type: "table",
+      id: "tab_rows",
+      name: "Rows",
+      roleKind: "static",
+      x: 40,
+      y: 420,
+      width: 714,
+      height: 60,
+      rotation: 0,
+      opacity: 1,
+      visible: true,
+      locked: false,
+      zIndex: 2,
+      parentId: null,
+      stroke: "#000000",
+      strokeWidth: 1,
+      fill: "transparent",
+      fontFamily: "Arimo",
+      rows: tracedRows,
+      columns: width,
+      colWidths: [60, 380, 130, 144],
+      rowHeights: [30, 30],
+      cells,
+      borderColor: "#3a3a3a",
+      borderWidth: 1,
+      cellFill: "transparent",
+      headerRow: true,
+      headerFill: "#f2efe8",
+      headerTextColor: "#101010",
+      cellTextColor: "#101010",
+      padding: 4,
+      repeat: { key: "items", startRow: 1, endRow: 1, maxItems: 300, repeatHeader: true },
+      expansion: { y: { mode: "unbounded" } },
+    } as unknown as TemplateObject,
+    text({ text: "Subtotal {{subtotal}}", x: 470, y: 620, width: 280, textAlign: "right" }),
+    text({ text: "Sales tax {{tax_total}}", x: 470, y: 646, width: 280, textAlign: "right" }),
+    text({ text: "TOTAL {{grand_total}}", x: 470, y: 672, width: 280, textAlign: "right" }),
+    text({ text: "Round off {{round_off}}", x: 470, y: 698, width: 280, textAlign: "right" }),
+    text({ text: "PAYABLE {{payable}}", x: 470, y: 724, width: 280, textAlign: "right", fontWeight: "bold" }),
+    text({ text: "{{worded}}", x: 40, y: 770, width: 700, fontSize: 11, fontStyle: "italic" }),
+  ];
+  template.meta.computed = [
+    { key: "line", op: "sum-times", args: ["items.qty", "items.rate"] },
+    { key: "line_gst", op: "percent", args: ["items.line"], rateKey: "items.gst" },
+    { key: "subtotal", op: "sum", args: ["items.line"] },
+    { key: "tax_total", op: "sum", args: ["items.line_gst"] },
+    { key: "grand_total", op: "add", args: ["subtotal", "tax_total"] },
+    { key: "round_off", op: "round-off", args: ["grand_total"], roundTo: 0 },
+    { key: "payable", op: "add", args: ["grand_total", "round_off"] },
+    { key: "worded", op: "in-words", args: ["payable"] },
+  ];
+  fixtures.push({
+    name: "trade-tax-invoice",
+    template,
+    values: {
+      ...baseValues,
+      // Four columns per row: the fourth is the rate THIS row is taxed at.
+      // Quantities, rates and taxes all carry their own decimals, so a flat
+      // sheet-level rate would print a tax that matches no row.
+      items: JSON.stringify([
+        { qty: "2", description: "Cotton saree, handloom", rate: "500.00", gst: "18" },
+        { qty: "1", description: "Silk dupatta", rate: "1000.00", gst: "12" },
+        { qty: "0.5", description: "Lace border, per metre", rate: "200.55", gst: "5" },
+      ]),
+    },
+  });
+
   const dir = join(import.meta.dirname, "..", "tests", "fixtures", "corpus");
   mkdirSync(dir, { recursive: true });
   for (const f of fixtures) {
     writeFileSync(join(dir, `${f.name}.template.json`), JSON.stringify(f.template, null, 2), "utf8");
     writeFileSync(join(dir, `${f.name}.values.json`), JSON.stringify(f.values, null, 2), "utf8");
   }
-  console.log(`corpus second pass: ${fixtures.length} templates in ${dir}`);
+  console.log(`corpus written: ${fixtures.length} templates in ${dir}`);
 }

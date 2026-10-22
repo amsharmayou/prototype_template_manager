@@ -61,9 +61,27 @@ export interface TemplateObjectBase {
    * bottom/right inset, `stretch` resizes with the parent.
    */
   anchor?: ChildAnchor;
+  /**
+   * Conditional visibility at print time: an object with one declares that it
+   * is part of the story only when a form value satisfies it - an advisory
+   * line under a cheque number, say, or a payment-mode block keyed to the
+   * field that names it. Absent means "always paints".
+   */
+  visibleWhen?: VisibleWhen;
   stroke: string;
   strokeWidth: number;
   fill: string;
+}
+
+/**
+ * One visibility condition, matching the form's own value shape: `notEmpty`
+ * reads the value as present-or-absent, `equals` compares the whole value.
+ * Both together mean both. A key that no field fills evaluates as absent.
+ */
+export interface VisibleWhen {
+  key: string;
+  equals?: string;
+  notEmpty?: boolean;
 }
 
 export interface LineObject extends TemplateObjectBase {

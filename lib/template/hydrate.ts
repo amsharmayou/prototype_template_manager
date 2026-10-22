@@ -90,6 +90,10 @@ function applyCommon<T extends FabricObject>(
   if (anchor !== undefined) {
     obj.set({ anchor } as never);
   }
+  const visibleWhen = (o as { visibleWhen?: unknown }).visibleWhen;
+  if (visibleWhen !== undefined) {
+    obj.set({ visibleWhen } as never);
+  }
   const container = (o as { container?: unknown }).container;
   if (container !== undefined) {
     obj.set({ container } as never);

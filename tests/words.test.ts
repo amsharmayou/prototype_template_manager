@@ -39,7 +39,8 @@ describe("spellMoney", () => {
   });
 
   it("uses the currency it is given", () => {
-    expect(spellMoney(100, 2, "USD")).toBe("One Dollar Only");
+    expect(spellMoney(100, 2, "Dollars", "Cents")).toBe("One Dollar Only");
+    expect(spellMoney(250, 2, "Dollars", "Cents")).toBe("Two Dollars Fifty Cents Only");
   });
 
   it("spells a sub-unit past three digits instead of answering undefined", () => {

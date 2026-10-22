@@ -1,0 +1,7 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "items": "[{\"qty\":\"2\",\"description\":\"Cotton saree, handloom\",\"rate\":\"500.00\",\"gst\":\"18\"},{\"qty\":\"1\",\"description\":\"Silk dupatta\",\"rate\":\"1000.00\",\"gst\":\"12\"},{\"qty\":\"0.5\",\"description\":\"Lace border, per metre\",\"rate\":\"200.55\",\"gst\":\"5\"}]"
+}

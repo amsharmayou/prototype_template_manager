@@ -145,6 +145,10 @@ function baseFields(
     typeof o.anchor === "object" && o.anchor !== null
       ? (o.anchor as TemplateObjectBase["anchor"])
       : undefined;
+  // The visibility condition rides the same way a custom policy does: read
+  // shape-checked rather than spread, so a half-written condition degrades to
+  // "always visible" instead of hiding a block on every render.
+  const when = readVisibleWhen(o.visibleWhen);
   return {
     id,
     name: rawName || defaultName(o.type, zIndex),
@@ -161,10 +165,32 @@ function baseFields(
     parentId: typeof o.parentId === "string" ? o.parentId : null,
     layoutParentId,
     ...(anchor === undefined ? {} : { anchor }),
+    ...(when === undefined ? {} : { visibleWhen: when }),
     stroke: str(o.stroke, "#000000") || "#000000",
     strokeWidth: num(o.strokeWidth, 1),
     fill: str(o.fill, "transparent") || "transparent",
   };
+}
+
+/**
+ * Read a visibility condition off a Fabric object, or `undefined` when it has
+ * none.
+ *
+ * Shape-checked like every other custom property: the condition needs a field
+ * key, and optionally a literal to compare against, which is "show only when
+ * this field is filled (and equals this)". Anything else is treated as "no
+ * condition", which is what an unconditioned object means today.
+ */
+function readVisibleWhen(v: unknown): TemplateObjectBase["visibleWhen"] | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const raw = v as { key?: unknown; equals?: unknown; notEmpty?: unknown };
+  const key = typeof raw.key === "string" && raw.key.trim().length > 0 ? raw.key.trim() : undefined;
+  if (key === undefined) return undefined;
+  const equals = typeof raw.equals === "string" && raw.equals.length > 0 ? raw.equals : undefined;
+  const notEmpty = raw.notEmpty === true ? true : undefined;
+  if (equals === undefined && notEmpty === undefined) return { key };
+  if (equals !== undefined) return { key, equals };
+  return { key, notEmpty };
 }
 
 /**

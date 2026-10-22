@@ -12,6 +12,7 @@
 
 import type { ComputedSpec, RoundingMode } from "@/lib/package/format";
 
+import { spellMoney } from "./words";
 import type { Values } from "./values";
 
 /**
@@ -40,6 +41,13 @@ export interface ComputeOptions {
   rounding?: RoundingMode;
   /** Decimal places a count operand is read at. Default 6. */
   qtyScale?: number;
+  /**
+   * Set only by the band evaluators (`bandRowValues`, `withRowsComputed`):
+   * marks `numeric` as holding per-row figures, so a spec whose column shares
+   * its name with a computed entry reads that entry rather than the raw cell
+   * the host supplied.
+   */
+  rowContext?: boolean;
 }
 
 function isQtyArg(name: string): boolean {
@@ -229,11 +237,20 @@ function cell(
   numeric: Record<string, number>,
   s: number,
   row: Record<string, unknown> | undefined,
+  numericFirst?: Record<string, number>,
 ): number {
   if (row === undefined) return flat(arg, values, numeric, s);
   const dot = arg.indexOf(".");
-  if (dot <= 0) return parseMinorUnits(row[arg], s);
-  return parseMinorUnits(row[arg.slice(dot + 1)], s);
+  const col = dot <= 0 ? arg : arg.slice(dot + 1);
+  // Inside a band evaluation the row's computed columns are already resolved
+  // numeric values for this very row, so they read before the raw cell text:
+  // a derived line reads the figure it was derived from, not whatever string
+  // the host supplied.
+  if (numericFirst && has(numericFirst, col)) {
+    return numericFirst[col]!;
+  }
+  const cellValue = row[dot <= 0 ? arg : col];
+  return parseMinorUnits(cellValue, s);
 }
 
 const split = (arg: string): [string, string] => {
@@ -267,9 +284,20 @@ function rateOf(
   numeric: Record<string, number>,
   s: number,
   mode: RoundingMode,
+  row?: Record<string, unknown>,
 ): number {
   if (rateKey === undefined) return 0;
   if (has(numeric, rateKey)) return numeric[rateKey]! * 10 ** (RATE_SCALE - s);
+  // A dotted rate read inside a band evaluation (a per-row rate such as
+  // `rows.gst`) belongs to that row: each line is charged at the rate printed
+  // beside it, not at whichever rate the sheet's own fields happen to carry.
+  const dot = rateKey.indexOf(".");
+  if (row !== undefined && dot > 0) {
+    const cell = row[rateKey.slice(dot + 1)];
+    if (cell !== undefined && cell !== null && cell !== "") {
+      return parseMinorUnits(cell, RATE_SCALE, mode);
+    }
+  }
   return parseMinorUnits(values[rateKey], RATE_SCALE, mode);
 }
 
@@ -292,7 +320,9 @@ export function computeAll(
   const qtyScale = safeScale(options.qtyScale ?? DEFAULT_QTY_SCALE);
   const numeric: Record<string, number> = Object.create(null);
   const out: Record<string, string> = Object.create(null);
-
+  // Set only while a band's specs are evaluated against one row: the row's
+  // computed columns then read before its raw cells (see `cell`).
+  const rowNumeric = options.rowContext === true ? numeric : undefined;
   /**
    * One operand of a product, read at its own scale: a count-shaped key at
    * the count scale, everything else at the currency scale. A recorded
@@ -312,8 +342,31 @@ export function computeAll(
       return { value: parseMinorUnits(values[arg], argScale, mode), scale: argScale };
     }
     const dot = arg.indexOf(".");
-    const cellValue = dot <= 0 ? row[arg] : row[arg.slice(dot + 1)];
+    const col = dot <= 0 ? arg : arg.slice(dot + 1);
+    if (rowNumeric && dot > 0 && has(numeric, col)) {
+      const v = numeric[col]!;
+      return { value: argScale === s ? v : v * 10 ** (argScale - s), scale: argScale };
+    }
+    const cellValue = dot <= 0 ? row[arg] : row[col];
     return { value: parseMinorUnits(cellValue, argScale, mode), scale: argScale };
+  };
+
+  /**
+   * Resolve an operand the way `sum` does: a dotted path that no whole key
+   * claims reads its band cell, summed across the band's rows when no single
+   * row is in scope (a sheet-level percentage lands on the summed column).
+   * The row-scoped resolve (`operand`) does not apply here: callers that need
+   * per-row figures run inside `bandRowValues`, whose values map carries one
+   * row.
+   */
+  const baseValue = (arg: string): number => {
+    const [repeatKey] = split(arg);
+    if (repeatKey && !nameMatches(arg, values, numeric)) {
+      let sum = 0;
+      for (const row of rowsFor(values, repeatKey)) sum += cell(arg, values, numeric, s, row);
+      return sum;
+    }
+    return flat(arg, values, numeric, s);
   };
 
   for (const spec of specs) {
@@ -377,10 +430,48 @@ export function computeAll(
         break;
       }
       case "percent": {
-        const base = args.length > 0 ? flat(args[0]!, values, numeric, s) : 0;
-        const rate = rateOf(spec.rateKey, values, numeric, s, mode);
+        const baseArg = args[0] ?? "";
+        const [baseKey] = split(baseArg);
+        const baseRows =
+          baseKey && !nameMatches(baseArg, values, numeric) ? rowsFor(values, baseKey) : [];
+        const row0 = baseRows[0];
+        // Level: a percentage of a dotted column lands on the sum of that
+        // column when no row is in scope (the whole sheet), and on the single
+        // row's own cell inside a band evaluation - which is what makes a
+        // per-row rate work: the rate is read from the same row.
+        const base =
+          baseRows.length > 0
+            ? baseRows.reduce((acc, r) => acc + cell(baseArg, values, numeric, s, r, rowNumeric), 0)
+            : flat(baseArg, values, numeric, s);
+        const rate = rateOf(spec.rateKey, values, numeric, s, mode, row0);
         result = scaledProduct(base, rate, 100 * 10 ** RATE_SCALE, mode);
         break;
+      }
+      case "round-off": {
+        const source = args.length > 0 ? baseValue(args[0]!) : 0;
+        const to = Math.min(
+          typeof spec.roundTo === "number" && Number.isInteger(spec.roundTo) && spec.roundTo >= 0
+            ? spec.roundTo
+            : 0,
+          s,
+        );
+        // The step is how many minor units one unit of the target scale is
+        // worth: rounding `3510.62` to whole units moves it 38 paise, and that
+        // gap is exactly what the round-off line asks the payer for.
+        const factor = 10 ** (s - to);
+        const sign = source < 0 ? -1 : 1;
+        const stepped =
+          sign * roundMagnitude(Math.abs(source) / factor, mode) * factor;
+        result = stepped - source;
+        break;
+      }
+      case "in-words": {
+        const source = args.length > 0 ? baseValue(args[0]!) : 0;
+        // Kept numeric on the chain (a sum of a words entry still resolves) but
+        // printed as the words themselves.
+        numeric[spec.key] = source;
+        out[spec.key] = spellMoney(source, s);
+        continue;
       }
       default:
         result = 0;
@@ -396,7 +487,7 @@ export function computeAll(
  *
  * A spec belongs when an arg or the rate names one of the band's columns as a
  * dotted path that no whole key claims (`rows.qty`), and so does every spec
- * in the chain that reads another band spec's key — a per-row figure that
+ * in the chain that reads another band spec's key ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â a per-row figure that
  * feeds a further per-row charge must ride along with it. Whole-name matches
  * (`rows` itself declared as a flat field) are excluded, matching how
  * `computeAll` resolves.
@@ -460,7 +551,7 @@ export function bandRowValues(
 ): Record<string, string> {
   const band = specsForBand(specs, repeatKey);
   if (band.length === 0) return {};
-  return computeAll(band, { ...values, [repeatKey]: JSON.stringify([item]) }, scale, options);
+  return computeAll(band, { ...values, [repeatKey]: JSON.stringify([item]) }, scale, { ...options, rowContext: true });
 }
 
 /**

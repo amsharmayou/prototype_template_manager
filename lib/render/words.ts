@@ -1,131 +1,128 @@
 /**
- * Spell a money figure out in words.
+ * Spelled-out money for the Indian numbering system.
  *
- * Hand-written tables rather than a locale-aware number formatter: locale
- * machinery is banned by the `lib/render` purity test, because the renderer has
- * to survive runtimes where it does not exist. `sha256.ts` avoids the platform
- * digest for the same reason. The wording also has to read the way the printed
- * form reads, which is a stricter requirement than a formatter is held to.
- *
- * Grouping follows the Indian system (crore / lakh / thousand), because the
- * figure-in-words line is a mandatory field on an Indian bill and Western
- * thousands grouping is what a reader of one would call wrong.
+ * Built from integer minor units - never from a float, and a float that does
+ * arrive is rounded to the nearest minor unit first, because a rounding
+ * remainder of -0.40 paise is not a debt and must not print "Minus Zero".
+ * Pure; English only; the Indian ladder (kharab, arab, crore, lakh, thousand,
+ * hundred) rather than the western millions, because that is how the reader
+ * of these bills says numbers out loud. Group names run out at kharab: past
+ * that magnitude the top group prints as digits, which are unambiguous where
+ * a word is not.
  */
-
-interface CurrencyWords {
-  majorOne: string;
-  majorMany: string;
-  minorOne: string;
-  minorMany: string;
-}
 
 const ONES = [
-  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
-  "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
-  "Seventeen", "Eighteen", "Nineteen",
+  "Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight",
+  "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen",
+  "Sixteen", "Seventeen", "Eighteen", "Nineteen",
 ];
 
-const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+const TENS = [
+  "", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety",
+];
 
-/**
- * Both forms are listed rather than derived by appending an "s". The sub-unit
- * of most currencies keeps its spelling whatever the count, so a naive suffix
- * prints "Fifty Paises Only" -- and a bill that says that is one a customer
- * queries.
- */
-const CURRENCY: Record<string, CurrencyWords> = {
-  inr: { majorOne: "Rupee", majorMany: "Rupees", minorOne: "Paisa", minorMany: "Paise" },
-  usd: { majorOne: "Dollar", majorMany: "Dollars", minorOne: "Cent", minorMany: "Cents" },
-  eur: { majorOne: "Euro", majorMany: "Euros", minorOne: "Cent", minorMany: "Cents" },
-  gbp: { majorOne: "Pound", majorMany: "Pounds", minorOne: "Penny", minorMany: "Pennies" },
-};
-
-const UNKNOWN: CurrencyWords = {
-  majorOne: "Unit",
-  majorMany: "Units",
-  minorOne: "Cent",
-  minorMany: "Cents",
-};
-
-function under100(n: number): string {
-  if (n < 20) return ONES[n] ?? "";
-  return `${TENS[Math.floor(n / 10)] ?? ""}${n % 10 ? ` ${ONES[n % 10]}` : ""}`.trim();
+/** Words for a non-negative integer below one hundred. */
+function underHundred(value: number): string {
+  if (value < 20) return ONES[value]!;
+  const tens = TENS[Math.floor(value / 10)]!;
+  const rest = value % 10;
+  return rest === 0 ? tens : `${tens} ${ONES[rest]}`;
 }
 
-function under1000(n: number): string {
-  const head = Math.floor(n / 100) ? `${ONES[Math.floor(n / 100)]} Hundred` : "";
-  const tail = under100(n % 100);
-  return [head, tail].filter(Boolean).join(" ");
+/** Words for a non-negative integer below one hundred. */
+function underThousand(value: number): string {
+  if (value < 100) return underHundred(value);
+  const hundreds = Math.floor(value / 100);
+  const rest = value % 100;
+  return rest === 0
+    ? `${ONES[hundreds]} Hundred`
+    : `${ONES[hundreds]} Hundred ${underHundred(rest)}`;
+}
+
+/** Words for a non-negative integer below one lakh (thousand, hundred). */
+function underLakh(value: number): string {
+  if (value < 1000) return underThousand(value);
+  const thousands = Math.floor(value / 1000);
+  const rest = value % 1000;
+  return rest === 0
+    ? `${underThousand(thousands)} Thousand`
+    : `${underThousand(thousands)} Thousand ${underThousand(rest)}`;
 }
 
 /**
- * Indian grouping, largest first: kharab (10^11), arab (10^9), crore (10^7),
- * lakh (10^5), thousand (10^3).
+ * Words for one group value, where "One Hundred" and up read as digits.
  *
- * The groups are walked once rather than recursing into Crore, which repeated
- * the name once per level: 10^21 read as "One Lakh Crore Crore". Past 999 of the
- * largest group there is no established Indian name, so the count is printed as
- * digits -- unambiguous, where a repeated or invented word is not.
+ * A group value only reaches three digits when the magnitude outran the names
+ * the ladder carries (ten thousand kharab, say); recursing into more group
+ * words there produced doubled names, and digits cannot disagree.
  */
-const GROUPS: readonly (readonly [number, string])[] = [
-  [100000000000, "Kharab"],
-  [1000000000, "Arab"],
-  [10000000, "Crore"],
-  [100000, "Lakh"],
-  [1000, "Thousand"],
-];
+function groupValue(value: number): string {
+  return value > 0 && value < 100 ? underHundred(value) : String(value);
+}
 
-function groupWords(n: number): string {
-  if (n <= 0) return "";
-  let rest = n;
+/** Whole words for a non-negative rupee figure, Indian ladder. */
+function indianWords(value: number): string {
+  const ladder: Array<[number, string]> = [
+    [10 ** 11, "Kharab"],
+    [10 ** 9, "Arab"],
+    [10 ** 7, "Crore"],
+    [10 ** 5, "Lakh"],
+    [1000, "Thousand"],
+  ];
   const parts: string[] = [];
-  for (const [size, name] of GROUPS) {
-    const count = Math.floor(rest / size);
-    if (count <= 0) continue;
-    parts.push(`${count >= 1000 ? String(count) : under1000(count)} ${name}`);
+  let rest = value;
+  for (const [size, name] of ladder) {
+    const group = Math.floor(rest / size);
     rest %= size;
+    if (group > 0) parts.push(`${groupValue(group)} ${name}`);
   }
-  if (rest > 0) parts.push(under1000(rest));
-  return parts.join(" ");
+  if (rest > 0) parts.push(underLakh(rest));
+  return parts.length > 0 ? parts.join(" ") : "Zero";
+}
+
+/** "Rupees" -> "Rupee", "Dollars" -> "Dollar"; abbreviations pass through. */
+function singularOf(word: string): string {
+  if (word.endsWith("ies") && word.length > 4) return `${word.slice(0, -3)}y`;
+  if (word.endsWith("s") && word.length > 1) return word.slice(0, -1);
+  return word;
 }
 
 /**
- * `minorUnits` is an integer count of the smallest currency unit, so the whole
- * conversion stays exact; `scale` is how many decimal places that unit carries.
+ * `1050` at scale 2 reads "Ten Rupees and Fifty Paise Only".
  *
- * The sub-unit is read through `groupWords` rather than `under1000`: at four or
- * more decimals the sub-unit count runs past three digits, and a helper capped
- * at 999 answers for the thousands column with `undefined`.
+ * The currency word is dropped when there are no whole units ("Forty Paise
+ * Only", the shape a sub-unit round-off line takes) unless everything is
+ * zero, where "Zero Rupees Only" is the only line that does not look like a
+ * rendering bug. The sign rides the words - "Minus One Rupee Only" - because
+ * a credit note prints it. Whole-unit counts of one take the singular.
  */
-export function spellMoney(minorUnits: number, scale: number, currency?: string): string {
-  const safe = Number.isInteger(scale) && scale >= 0 && scale <= 6 ? scale : 2;
-  const words = CURRENCY[(currency ?? "inr").toLowerCase()] ?? UNKNOWN;
-  const n = Number.isFinite(minorUnits) ? Math.abs(Math.round(minorUnits)) : 0;
+export function spellMoney(
+  minor: number,
+  scale: number,
+  currency = "Rupees",
+  subunit = "Paise",
+  subunitSingular = "Paisa",
+): string {
+  const s = Number.isInteger(scale) && scale >= 0 && scale <= 6 ? scale : 2;
+  // A host that computed in floats hands over a fraction of a minor unit;
+  // rounding to the nearest unit keeps the spelled words consistent with the
+  // printed figures.
+  const units = Math.round(minor);
+  if (units === 0) return `Zero ${currency} Only`;
 
-  let majorUnits = n;
-  let minorPart = 0;
-  if (safe > 0) {
-    const divisor = 10 ** safe;
-    majorUnits = Math.floor(n / divisor);
-    minorPart = n % divisor;
-  }
+  const prefix = units < 0 ? "Minus " : "";
+  const magnitude = Math.abs(units);
+  const unit = 10 ** s;
+  const whole = Math.floor(magnitude / unit);
+  const fraction = magnitude % unit;
 
-  const pieces: string[] = [];
-  // A figure whose magnitude rounds away is not a negative one: "-0.40" is a
-  // rounding remainder rather than a debt, and no bill can carry "Minus Zero".
-  if (minorUnits < 0 && n > 0) pieces.push("Minus");
-  if (majorUnits === 0 && minorPart === 0) {
-    pieces.push(`Zero ${words.majorMany} Only`);
-  } else {
-    if (majorUnits > 0) {
-      const unit = majorUnits === 1 ? words.majorOne : words.majorMany;
-      pieces.push(`${groupWords(majorUnits)} ${unit}`);
-    }
-    if (minorPart > 0) {
-      const unit = minorPart === 1 ? words.minorOne : words.minorMany;
-      pieces.push(`${groupWords(minorPart)} ${unit}`);
-    }
-    pieces.push("Only");
+  const body: string[] = [];
+  if (whole > 0) {
+    body.push(whole === 1 ? `One ${singularOf(currency)}` : `${indianWords(whole)} ${currency}`);
   }
-  return pieces.join(" ").replace(/\s+/g, " ").trim();
+  if (fraction > 0 && s > 0) {
+    body.push(`${indianWords(fraction)} ${fraction === 1 ? subunitSingular : subunit}`);
+  }
+  if (body.length === 0) body.push(`Zero ${currency}`);
+  return `${prefix}${body.join(" ")} Only`;
 }
