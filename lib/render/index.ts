@@ -1,4 +1,4 @@
-import { collectDocumentVariables } from "@/lib/template/placeholders";
+﻿import { collectDocumentVariables } from "@/lib/template/placeholders";
 import type { ComputedSpec, RoundingMode } from "@/lib/package/format";
 import {
   A4_HEIGHT,
@@ -15,6 +15,7 @@ import { attr, escapeHtml } from "./escape";
 import { calculateLayout } from "./layout";
 import type { ContentMeasurement } from "./measure";
 import { renderObject } from "./primitives";
+import { paginate } from "./paginate";
 import { expandRepeats, type RepeatContext } from "./repeat";
 import { applyRowHeights, rowsWorthMeasuring } from "./rowHeights";
 import { sha256Hex } from "./sha256";
@@ -105,6 +106,16 @@ export interface RenderResult {
    * customer would actually notice.
    */
   page: { width: number; height: number };
+  /**
+   * The document cut into printable pages.
+   *
+   * One entry per sheet, each with objects already translated into the
+   * page's own coordinates. A one-page document yields exactly one entry and
+   * `objects`/`page` describe the same content; a long bill yields one entry
+   * per sheet with the band's rows split and headers repeated, so an exporter
+   * never has to know where a boundary fell.
+   */
+  pages: Array<{ objects: TemplateObject[]; width: number; height: number }>;
 }
 
 /**
@@ -354,17 +365,23 @@ export function renderHtml(
   const pageWidth = geometry ? geometry.page.width : width;
   const pageHeight = geometry ? geometry.page.height : height;
 
-  // Ordered by z-index as today; layout only moves things, it never repaints
-  // them in a different order.
-  const ordered = placed
-    .map((o, i) => ({ o, i }))
-    .sort((a, b) => a.o.zIndex - b.o.zIndex || a.i - b.i);
+  // The solved space is one continuous surface that can be taller than the
+  // sheet: pagination cuts it at paper boundaries with the band's rows
+  // distributed, sheet furniture repeated and the summary following the
+  // band's end. Everything downstream paints pages, not one long sheet.
+  const pagination = paginate(placed, pageHeight);
 
   const placeholders = options.placeholders ?? "hide";
-  const body = ordered
-    .map(({ o, i }) => renderObject(o, i, enriched, refusals, placeholders))
-    .filter((s): s is string => typeof s === "string")
-    .join("\n");
+  const bodies = pagination.pages.map((slice) => {
+    const ordered = slice.objects
+      .map((o, i) => ({ o, i }))
+      .sort((a, b) => a.o.zIndex - b.o.zIndex || a.i - b.i);
+    return ordered
+      .map(({ o, i }) => renderObject(o, i, enriched, refusals, placeholders))
+      .filter((s): s is string => typeof s === "string")
+      .join("\n");
+  });
+  const body = bodies[0] ?? "";
 
   // The fingerprint covers the whole template with save time removed, while
   // retaining calculation rules because they change rendered output.
@@ -381,11 +398,23 @@ export function renderHtml(
   const title = escapeHtml(options.title ?? name);
 
   const html =
-    `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n` +
-    `<title>${title}</title>\n` +
-    `<style>\n${stylesheet(pageWidth, pageHeight)}\n</style>\n</head>\n<body>\n` +
-    `<div class="sheet" data-template-version="${attr(String(version))}" ` +
-    `data-template-hash="${hash}">\n${body}\n</div>\n</body>\n</html>\n`;
+    pagination.pages.length === 1
+      ? `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n` +
+        `<title>${title}</title>\n` +
+        `<style>\n${stylesheet(pageWidth, pageHeight)}\n</style>\n</head>\n<body>\n` +
+        `<div class="sheet" data-template-version="${attr(String(version))}" ` +
+        `data-template-hash="${hash}">\n${body}\n</div>\n</body>\n</html>\n`
+      : `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n` +
+        `<title>${title}</title>\n` +
+        `<style>\n${stylesheet(pageWidth, pageHeight, { multiPage: true })}\n</style>\n</head>\n<body>\n` +
+        bodies
+          .map(
+            (pageBody, p) =>
+              `<div class="sheet" data-template-version="${attr(String(version))}" ` +
+              `data-template-hash="${hash}" data-page="${p + 1}">\n${pageBody}\n</div>`,
+          )
+          .join("\n") +
+        `\n</body>\n</html>\n`;
 
   // The same guard `renderObject` applies to the text it paints: templates
   // arrive through an unvalidated cast, so a cell or object `text` may be a
@@ -410,12 +439,21 @@ const texts = objects.flatMap((o) =>
   // "the document is still printable, but here is what you should know", and a
   // caller reading one list should not have to know which pass produced an
   // entry. Repeat warnings come first so their order does not shift.
-return {
+  return {
       html,
       refusals: refusals.list(),
       variables,
-      warnings: [...repeatWarnings, ...(geometry?.diagnostics ?? [])],
+      warnings: [
+        ...repeatWarnings,
+        ...pagination.warnings,
+        ...(geometry?.diagnostics ?? []),
+      ],
       objects: placed.map((o) => ({ ...o })),
       page: { width: pageWidth, height: pageHeight },
+      pages: pagination.pages.map((slice) => ({
+        objects: slice.objects,
+        width: pageWidth,
+        height: pageHeight,
+      })),
     };
 }

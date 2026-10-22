@@ -10,7 +10,7 @@ import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 
 import { FontBook } from "@/lib/engine/fonts";
-import { buildDisplayList, hasComplexScript } from "@/lib/engine/list";
+import { buildDisplayList, buildDisplayPages, hasComplexScript } from "@/lib/engine/list";
 import { writePdf } from "@/lib/engine/pdf";
 import { renderDocument } from "@/lib/render/document";
 import { displayMapFor } from "@/lib/template/dataBinding";
@@ -108,9 +108,8 @@ describe("the pdf writer", () => {
       { objects: rendered.objects, page: rendered.page, warnings: rendered.warnings },
       { book },
     );
-    const first = await writePdf(list, { book, title: template.meta?.name });
-    const second = await writePdf(list, { book, title: template.meta?.name });
-    if (first.refusals.length) console.log("PDFREF:", JSON.stringify(first.refusals.slice(0, 3)));
+    const first = await writePdf([list], { book, title: template.meta?.name });
+    const second = await writePdf([list], { book, title: template.meta?.name });
     expect(first.refusals).toEqual([]);
     expect(Buffer.from(first.bytes).equals(Buffer.from(second.bytes))).toBe(true);
     const doc = await PDFDocument.load(first.bytes);
@@ -120,6 +119,37 @@ describe("the pdf writer", () => {
     expect(Math.round(width * 100) / 100).toBeCloseTo(595.28, 1);
     expect(Math.round(height * 100) / 100).toBeCloseTo(841.89, 1);
     expect(first.bytes.slice(0, 5)).toEqual(new TextEncoder().encode("%PDF-"));
+  });
+
+  it("writes a long bill as three A4 pages, each deterministic", async () => {
+    const book = loadBook();
+    const template = JSON.parse(
+      readFileSync(join(corpusDir, "long-invoice.template.json"), "utf8"),
+    ) as BillTemplate;
+    const values = JSON.parse(
+      readFileSync(join(corpusDir, "long-invoice.values.json"), "utf8"),
+    ) as Record<string, string>;
+    const rendered = renderDocument(template, values, {
+      computed: computedSpecsFor(template),
+      display: displayMapFor(template),
+    });
+    expect(rendered.pages.length).toBe(3);
+
+    const lists = buildDisplayPages(rendered.pages, rendered.warnings, { book });
+    const first = await writePdf(lists, { book, title: template.meta?.name });
+    const second = await writePdf(lists, { book, title: template.meta?.name });
+    expect(first.refusals).toEqual([]);
+    expect(Buffer.from(first.bytes).equals(Buffer.from(second.bytes))).toBe(true);
+
+    const doc = await PDFDocument.load(first.bytes);
+    expect(doc.getPageCount()).toBe(3);
+    // Every page is a full A4 sheet, and the display lists were built from
+    // page-local coordinates, so nothing paints past its own sheet.
+    for (const page of doc.getPages()) {
+      const { width, height } = page.getSize();
+      expect(Math.round(width * 100) / 100).toBeCloseTo(595.28, 1);
+      expect(Math.round(height * 100) / 100).toBeCloseTo(841.89, 1);
+    }
   });
 
   it("refuses to substitute a font the bundle does not carry", async () => {
@@ -135,7 +165,7 @@ describe("the pdf writer", () => {
     // Strip the bytes behind the display list's chosen face: the writer must
     // name the gap, not fall back to a standard font.
     (book as unknown as { bytes: Map<string, Uint8Array> }).bytes.delete(list.fonts[0]!.file);
-    const { refusals } = await writePdf(list, { book });
+    const { refusals } = await writePdf([list], { book });
     expect(refusals.some((m) => m.includes(list.fonts[0]!.file))).toBe(true);
   });
 
@@ -154,6 +184,11 @@ describe("the pdf writer", () => {
       { objects: rendered.objects, page: rendered.page, warnings: rendered.warnings },
       { book, refuseComplexScript: true },
     );
+    const sampleTexts = refused.paint
+      .filter((p) => p.kind === "text")
+      .flatMap((p) => p.lines.map((l) => l.text))
+      .slice(0, 6);
+    console.log("HINDI:", JSON.stringify({ warnings: refused.warnings, sampleTexts, textCount: refused.paint.filter((p) => p.kind === "text").length }));
     expect(
       refused.paint.some((p) => p.kind === "text" && p.lines.some((l) => hasComplexScript(l.text))),
     ).toBe(false);
@@ -165,7 +200,7 @@ describe("the pdf writer", () => {
       { book },
     );
     expect(list.paint.some((p) => p.kind === "text")).toBe(true);
-    const { refusals } = await writePdf(list, {
+    const { refusals } = await writePdf([list], {
       book,
       refuseComplexScript: true,
     });

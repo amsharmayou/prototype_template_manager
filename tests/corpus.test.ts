@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+﻿import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -96,5 +96,45 @@ describe("body corpus", () => {
     expect(html).toContain("78.13");
     expect(html).toContain("699.93");
     expect(html).toContain("6,044.24");
+  });
+
+  it("the long invoice paginates to three sheets with headers and a settled summary", () => {
+    const template = JSON.parse(
+      readFileSync(join(dir, "long-invoice.template.json"), "utf8"),
+    ) as BillTemplate;
+    const values = JSON.parse(
+      readFileSync(join(dir, "long-invoice.values.json"), "utf8"),
+    ) as Record<string, string>;
+    const computed = computedSpecsFor(template);
+    const rendered = renderDocument(template, values, {
+      computed,
+      display: displayMapFor(template),
+    });
+    // 80 data rows at 30px under a 30px header beginning at y=420: page 1
+    // holds 23 rows, pages 2 and 3 split the rest under a repeated header.
+    expect(rendered.pages.length).toBe(3);
+    expect(rendered.html).toContain('data-page="3"');
+    for (const p of [0, 1, 2]) {
+      expect(rendered.pages[p]!.objects.length).toBeGreaterThan(0);
+      // Every page is the full A4 sheet, not a shaved one.
+      expect(rendered.pages[p]!.height).toBe(1123);
+    }
+    // Rows are distributed, never lost: 80 "Catalogue item" cells across the
+    // three sheets, and the traced header row is repeated on 2 and 3.
+    const rowTexts = rendered.pages.flatMap((p) =>
+      p.objects.flatMap((o) =>
+        o.type === "table"
+          ? ((o.cells as unknown) as Array<{ text: string }>).map((c) => c.text)
+          : [],
+      ),
+    );
+    expect(rowTexts.filter((t) => t.startsWith("Catalogue item")).length).toBe(80);
+    expect(rowTexts.filter((t) => t === "Description").length).toBe(3);
+
+    // Page 3 carries the summary under the band's final chunk, not on page 1.
+    const page3Texts = rendered.pages[2]!.objects.map((o) =>
+      o.type === "text" ? (o as unknown as { text: string }).text : "",
+    );
+    expect(page3Texts.some((t) => t.includes("TOTAL"))).toBe(true);
   });
 });

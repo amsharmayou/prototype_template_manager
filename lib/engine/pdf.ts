@@ -53,23 +53,27 @@ function toRgb(value: string | undefined, fallback = "#000000"): { r: number; g:
   return { r: 0, g: 0, b: 0 };
 }
 
-export async function writePdf(list: { page: { width: number; height: number }; paint: DisplayPaint[]; fonts: FontRef[] }, options: WritePdfOptions): Promise<WritePdfResult> {
+/** One display list: one printable page with its own extent. */
+export interface PdfPageInput {
+  page: { width: number; height: number };
+  paint: DisplayPaint[];
+  fonts: FontRef[];
+}
+
+export async function writePdf(pagesInput: readonly PdfPageInput[], options: WritePdfOptions): Promise<WritePdfResult> {
+  // Convenience: a single page stays a single argument shape.
+  const lists: readonly PdfPageInput[] = pagesInput;
   const refusals: string[] = [];
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
   doc.setTitle(options.title ?? "Document");
   doc.setProducer("bill-template-maker");
-  // A4 templates land on the exact A4 point box (595.276 x 841.89); the 794 px
-  // template constant is 210.08 mm, a hair wide, and print paper is not. The
-  // content scale follows the box, so a page that is not A4 keeps the plain
-  // 0.75 px-to-pt conversion.
-  const A4_PT = { w: 595.2756, h: 841.8898 };
-  const isA4 = list.page.width === 794 && list.page.height === 1123;
-  const widthPt = isA4 ? A4_PT.w : list.page.width * (72 / 96);
-  const heightPt = isA4 ? A4_PT.h : list.page.height * (72 / 96);
-  const k = widthPt / list.page.width;
-  const pageH = heightPt;
-  const page = doc.addPage([widthPt, heightPt]);
+  // The clock stays out of the print path: pdf-lib stamps creation and
+  // modification times by default, and two saves that straddle a second
+  // boundary would disagree byte-for-byte. A fixed epoch makes determinism a
+  // property of the file, not of when the test happened to run.
+  doc.setCreationDate(new Date(0));
+  doc.setModificationDate(new Date(0));
 
   const embedded = new Map<string, PDFFont>();
   const embed = async (ref: FontRef): Promise<PDFFont | undefined> => {
@@ -89,6 +93,21 @@ export async function writePdf(list: { page: { width: number; height: number }; 
   };
 
   const images = new Map<string, PDFImage>();
+
+  // One PDF page per display list, in order. Metrics, subsets and images are
+  // shared across the document: page 3 of a long bill embeds nothing new, so
+  // a 60-line invoice stays one file with one font per face.
+  const A4_PT = { w: 595.2756, h: 841.8898 };
+  for (const list of lists) {
+    // A4 templates land on the exact A4 point box (595.276 x 841.89); the 794
+    // px template constant is 210.08 mm, a hair wide, and print paper is not.
+    // The content scale follows the box, so a page that is not A4 keeps the
+    // plain 0.75 px-to-pt conversion.
+    const isA4 = list.page.width === 794 && list.page.height === 1123;
+    const widthPt = isA4 ? A4_PT.w : list.page.width * (72 / 96);
+    const pageH = isA4 ? A4_PT.h : list.page.height * (72 / 96);
+    const k = widthPt / list.page.width;
+    const page = doc.addPage([widthPt, pageH]);
 
   for (const item of list.paint) {
     if (item.kind === "rect") {
@@ -199,6 +218,7 @@ export async function writePdf(list: { page: { width: number; height: number }; 
         color: (() => { const c = toRgb(item.color); return rgb(c.r, c.g, c.b); })(),
       });
     }
+  }
   }
 
   const bytes = await doc.save({ useObjectStreams: false });

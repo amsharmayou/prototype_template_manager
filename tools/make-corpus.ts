@@ -36,7 +36,12 @@ function cell(t: string, over: Partial<TableCell> = {}): TableCell {
   return { text: t, textAlign: "left", fontSize: 11, fontWeight: "normal", ...over };
 }
 
-function bandTable(head: string[], repeatKey: string, over: Record<string, unknown> = {}): TableObject {
+function bandTable(
+  head: string[],
+  repeatKey: string,
+  over: Record<string, unknown> = {},
+  maxItems = 60,
+): TableObject {
   const colWidths = head.length === 4 ? [60, 380, 130, 144] : [240, 480, 130, 144];
   const width = colWidths.reduce((a, b) => a + b, 0);
   const cells: TableCell[] = [
@@ -58,7 +63,7 @@ function bandTable(head: string[], repeatKey: string, over: Record<string, unkno
     colWidths, rowHeights: [30, 30, 30], cells, borderColor: "#3a3a3a",
     borderWidth: 1, cellFill: "transparent", headerRow: true, headerFill: "#f2efe8",
     headerTextColor: "#101010", cellTextColor: "#101010", padding: 4,
-    repeat: { key: repeatKey, startRow: 1, endRow: 1, maxItems: 60, repeatHeader: true },
+    repeat: { key: repeatKey, startRow: 1, endRow: 1, maxItems, repeatHeader: true },
     expansion: { y: { mode: "unbounded" } },
     ...over,
   } as unknown as TableObject;
@@ -359,3 +364,49 @@ for (const f of fixtures) {
   writeFileSync(join(dir, `${f.name}.values.json`), JSON.stringify(f.values, null, 2), "utf8");
 }
 console.log(`corpus written: ${fixtures.length} templates in ${dir}`);
+
+// 13. Long invoice: 80 band rows on A4 - the pagination exit fixture.
+// The band starts at y=420 with 30px rows: page 1 holds the traced header plus
+// 22 data rows, every later page holds 36 more under a repeated header, so the
+// rows flow across three sheets and the summary lands under the final chunk.
+{
+  const template = emptyTemplate(794, 1123, "Long invoice");
+  const band = bandTable(["Qty", "Description", "Rate", "Line"], "items", {}, 200);
+  template.objects = [
+    ...headerBlocks("TAX INVOICE"),
+    band,
+    text({ text: "Subtotal {{subtotal}}", x: 470, y: 620, width: 280, textAlign: "right" }),
+    text({ text: "GENERAL SALES TAX {{tax_amount}}", x: 470, y: 646, width: 280, textAlign: "right" }),
+    text({ text: "TOTAL {{grand_total}}", x: 470, y: 672, width: 280, textAlign: "right", fontWeight: "bold" }),
+  ];
+  template.meta.computed = [
+    LINE, SUBTOTAL,
+    { key: "tax_amount", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+    { key: "grand_total", op: "add", args: ["subtotal", "tax_amount"] },
+  ];
+  fixtures.push({
+    name: "long-invoice",
+    template,
+    values: {
+      ...baseValues, tax_rate: "12",
+      items: itemRows(
+        Array.from({ length: 80 }, (_, i) => [
+          String(i % 7 === 0 ? 2 : 1),
+          `Catalogue item number ${i + 1}, unit-packed`,
+          String(40 + (i % 13) * 7) + (i % 5 === 0 ? ".50" : ""),
+        ]),
+      ),
+    },
+  });
+}
+
+// (Writer second pass: appended fixtures above must reach disk too.)
+{
+  const dir = join(import.meta.dirname, "..", "tests", "fixtures", "corpus");
+  mkdirSync(dir, { recursive: true });
+  for (const f of fixtures) {
+    writeFileSync(join(dir, `${f.name}.template.json`), JSON.stringify(f.template, null, 2), "utf8");
+    writeFileSync(join(dir, `${f.name}.values.json`), JSON.stringify(f.values, null, 2), "utf8");
+  }
+  console.log(`corpus second pass: ${fixtures.length} templates in ${dir}`);
+}

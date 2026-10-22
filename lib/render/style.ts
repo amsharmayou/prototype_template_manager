@@ -30,8 +30,12 @@ export function pageRule(docW: number, docH: number): string {
   return `@page { size: ${docW}px ${docH}px; margin: 0; }`;
 }
 
-export function stylesheet(docW: number, docH: number): string {
-  return [
+export function stylesheet(
+  docW: number,
+  docH: number,
+  opts?: { multiPage?: boolean },
+): string {
+  const rules = [
     pageRule(docW, docH),
     `html, body { margin: 0; padding: 0; background: #fff; }`,
     `body { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }`,
@@ -43,5 +47,12 @@ export function stylesheet(docW: number, docH: number): string {
     `.ph { border: 1px dashed #9ca3af; display: flex; align-items: center; justify-content: center; color: #6b7280; }`,
     `* { box-sizing: border-box; }`,
     `* { -webkit-print-color-adjust: exact; print-color-adjust: exact; }`,
-  ].join("\n");
+  ];
+  if (opts?.multiPage === true) {
+    // One printed sheet per .sheet; the last page must not emit a trailing
+    // blank, which a blanket page-break-after would.
+    rules.push(`.sheet { page-break-after: always; break-after: page; }`);
+    rules.push(`.sheet:last-of-type { page-break-after: auto; break-after: auto; }`);
+  }
+  return rules.join("\n");
 }

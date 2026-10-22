@@ -238,6 +238,32 @@ export function buildDisplayList(input: ListInput, options: ListOptions): Displa
   return { page: { ...input.page }, fonts, paint, warnings };
 }
 
+/**
+ * One display list per printable page.
+ *
+ * `renderDocument` returns the document cut into pages; each page is laid out
+ * with the same font book and the same rules, so page 3 of a long bill is
+ * positioned by the same arithmetic that positioned page 1. Shared warnings
+ * ride on the first page - a caller reading one list should not have to know
+ * which pass produced an entry.
+ */
+export function buildDisplayPages(
+  pages: ReadonlyArray<{ objects: readonly TemplateObject[]; width: number; height: number }>,
+  sharedWarnings: readonly string[],
+  options: ListOptions,
+): DisplayList[] {
+  return pages.map((page, i) =>
+    buildDisplayList(
+      {
+        objects: page.objects,
+        page: { width: page.width, height: page.height },
+        warnings: i === 0 ? sharedWarnings : [],
+      },
+      options,
+    ),
+  );
+}
+
 function paintTable(
   book: FontBook,
   o: TableObject,

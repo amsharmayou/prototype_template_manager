@@ -120,7 +120,7 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
               </span>
               <span className="text-[12px] text-ink-faint">{item.format}</span>
               {item.id === "btpkg" ? (
-                <span className="text-[11px] text-stamp">v2: hash-verified bundle; single page print (multi-page soon)</span>
+                <span className="text-[11px] text-stamp">v2: hash-verified bundle; long bills paginate across A4 sheets</span>
               ) : null}
             </button>
           ))}

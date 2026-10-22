@@ -67,6 +67,8 @@ interface Band {
   endRow: number;
   key: string;
   maxItems: number;
+  /** The traced header row reprints at the top of later pages. */
+  repeatHeader?: boolean;
 }
 
 /**
@@ -123,7 +125,15 @@ function bandOf(o: TableObject): { band: Band; why: string | null } | null {
   const maxItems =
     typeof cap === "number" && Number.isInteger(cap) && cap > 0 ? cap : DEFAULT_REPEAT_MAX_ITEMS;
   return {
-    band: { startRow, endRow, key: key.trim(), maxItems },
+    // repeatHeader travels with the band: the paginator reads it later to know
+    // that the traced header row belongs at the top of every continuation page.
+    band: {
+      startRow,
+      endRow,
+      key: key.trim(),
+      maxItems,
+      ...(r.repeatHeader === true ? { repeatHeader: true } : {}),
+    },
     why: null,
   };
 }
@@ -291,7 +301,11 @@ function expandTable(
       rowHeights: newHeights,
       cells: newCells,
       height,
-      repeat: undefined,
+      // The band stays on the expanded table, carrying its traced shape: the
+      // expansion already happened, so nothing re-expands these rows, but the
+      // paginator reads this to know which table flows, where its traced
+      // header is and where the traced bottom sat under trailing blocks.
+      repeat: band,
     } as TableObject,
     warnings,
   };

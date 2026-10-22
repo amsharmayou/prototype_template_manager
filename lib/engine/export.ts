@@ -9,7 +9,7 @@
  */
 
 import { FontBook } from "@/lib/engine/fonts";
-import { buildDisplayList } from "@/lib/engine/list";
+import { buildDisplayPages } from "@/lib/engine/list";
 import { writePdf } from "@/lib/engine/pdf";
 import { renderDocument } from "@/lib/render/document";
 import type { ComputedSpec } from "@/lib/package/format";
@@ -66,14 +66,11 @@ export async function renderToPdf(
     ...(input.title !== undefined ? { title: input.title } : {}),
     display: displayMapFor(template),
   });
-  const list = buildDisplayList(
-    { objects: rendered.objects, page: rendered.page, warnings: rendered.warnings },
-    { book },
-  );
-  const { bytes, refusals } = await writePdf(list, {
+  const lists = buildDisplayPages(rendered.pages, rendered.warnings, { book });
+  const { bytes, refusals } = await writePdf(lists, {
     book,
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(loadImage ? { loadImage } : {}),
   });
-  return { bytes, refusals, warnings: list.warnings };
+  return { bytes, refusals, warnings: lists[0]?.warnings ?? [] };
 }
