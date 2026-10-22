@@ -3,26 +3,28 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/Controls";
-import { downloadJson, downloadText, safeFilename } from "@/lib/export/download";
+import { downloadBlob, downloadText, safeFilename } from "@/lib/export/download";
 import { exportDocx } from "@/lib/export/toDocx";
-import { exportPdf } from "@/lib/export/toPdf";
 import { exportPackage } from "@/lib/export/toPackage";
 import { exportJson, exportPng, exportSvg } from "@/lib/export/toSvg";
 import { renderHtml } from "@/lib/render";
+import { loadFontBook, renderToPdf } from "@/lib/engine/export";
 import type { EditorController } from "@/lib/canvas/EditorController";
 
 type ExportItem = "json" | "svg" | "pdf" | "docx" | "png" | "html" | "btpkg";
 
-const ITEMS: Array<{ id: ExportItem; label: string; hint: string }> = [
-  // First, because it is the only one a host application can open. Everything
-  // below it is for a person reading the bill, not for the app that fills it.
-  { id: "btpkg", label: "Bill Package (.btpkg)", hint: "For a host app to open" },
-  { id: "json", label: "JSON Template", hint: "Reusable template format" },
-  { id: "svg", label: "SVG", hint: "Vector structure" },
-  { id: "pdf", label: "PDF", hint: "Document sized page" },
-  { id: "docx", label: "DOCX", hint: "Native Word tables & text" },
-  { id: "png", label: "Preview PNG", hint: "2x raster" },
-  { id: "html", label: "HTML Document", hint: "Self-contained, no scripts" },
+/**
+ * Outcome first, format second: the person picking here is deciding what they
+ * want to *do* with the bill, not which file extension they need.
+ */
+const ITEMS: Array<{ id: ExportItem; outcome: string; format: string }> = [
+  { id: "pdf", outcome: "Print it", format: "PDF document" },
+  { id: "png", outcome: "A picture", format: "PNG image" },
+  { id: "docx", outcome: "Open in Word", format: "DOCX file" },
+  { id: "svg", outcome: "Edit elsewhere", format: "SVG drawing" },
+  { id: "json", outcome: "Template for an app", format: "JSON template" },
+  { id: "btpkg", outcome: "Template for an app", format: "Bill package (.btpkg)" },
+  { id: "html", outcome: "A web page", format: "HTML document" },
 ];
 
 export default function ExportMenu({ controller }: { controller: EditorController }) {
@@ -36,8 +38,15 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   const run = async (item: ExportItem) => {
@@ -48,7 +57,24 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
       if (item === "btpkg") exportPackage(template);
       if (item === "json") exportJson(template);
       if (item === "svg") await exportSvg(template);
-      if (item === "pdf") await exportPdf(template);
+      if (item === "pdf") {
+        // Print output is the engine's vector PDF: same font book, same
+        // display list, same bytes a filled render would deliver.
+        const book = await loadFontBook();
+        const { bytes, refusals } = await renderToPdf(
+          { template, title: template.meta?.name || "Document" },
+          book,
+        );
+        if (refusals.length) {
+          throw new Error(
+            `${refusals[0]}${refusals.length > 1 ? ` (+${refusals.length - 1} more)` : ""}`,
+          );
+        }
+        downloadBlob(
+          new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" }),
+          `${safeFilename(String(template.meta?.name ?? ""))}.pdf`,
+        );
+      }
       if (item === "docx") await exportDocx(template);
       if (item === "png") await exportPng(template, 2);
       if (item === "html") {
@@ -74,37 +100,41 @@ export default function ExportMenu({ controller }: { controller: EditorControlle
   return (
     <div ref={ref} className="relative">
       <Button
-        variant="primary"
         onClick={() => setOpen((v) => !v)}
-        title="Export the reconstructed template"
+        title="Download a copy of this bill"
       >
-        Export ▾
+        Get a copy ▾
       </Button>
       {open ? (
-        <div className="absolute right-0 z-30 mt-1 w-60 overflow-hidden rounded-md border border-neutral-200 bg-white shadow-lg">
+        <div className="absolute right-0 z-30 mt-1 w-72 overflow-hidden rounded-lg border border-rule bg-paper shadow-lg">
           {ITEMS.map((item) => (
             <button
               key={item.id}
               type="button"
               disabled={busy !== null}
               onClick={() => void run(item.id)}
-              className="flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left hover:bg-neutral-50 disabled:opacity-50"
+              className="flex w-full flex-col items-start px-3 py-2 text-left hover:bg-desk disabled:opacity-50"
             >
-              <span className="text-xs font-medium text-neutral-800">
-                {busy === item.id ? "Exporting…" : item.label}
+              <span className="text-[13px] font-medium text-ink">
+                {busy === item.id ? "Working…" : item.outcome}
               </span>
-              <span className="text-[10px] text-neutral-400">{item.hint}</span>
+              <span className="text-[12px] text-ink-faint">{item.format}</span>
+              {item.id === "btpkg" ? (
+                <span className="text-[11px] text-stamp">v2: hash-verified bundle; single page print (multi-page soon)</span>
+              ) : null}
             </button>
           ))}
         </div>
       ) : null}
       {error ? (
-        <span className="absolute right-0 top-full mt-1 z-30 w-60 rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] text-red-700">
+        <p
+          role="alert"
+          data-export-error
+          className="absolute right-0 top-full z-30 mt-1 w-72 rounded-lg border border-stamp bg-stamp-wash px-3 py-2 text-[12px] text-stamp"
+        >
           {error}
-        </span>
+        </p>
       ) : null}
     </div>
   );
 }
-
-export { downloadJson };

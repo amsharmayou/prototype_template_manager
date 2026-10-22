@@ -7,15 +7,20 @@ import DynamicForm from "@/components/render/DynamicForm";
 import { deriveForm } from "@/lib/package/form";
 import { PACKAGE_VERSION } from "@/lib/package/format";
 import type { ComputedSpec, PackageManifest } from "@/lib/package/format";
+import { computedSpecsFor } from "@/lib/package/computedSpecs";
 import { Button } from "@/components/ui/Controls";
-import { exportPdf } from "@/lib/export/toPdf";
-import { downloadText, safeFilename } from "@/lib/export/download";
+import { renderToPdf, loadFontBook } from "@/lib/engine/export";
+import { downloadBlob, downloadText, safeFilename } from "@/lib/export/download";
 import {
   extractTemplateFields,
-  fillTemplate,
+  extractFillableFields,
+  defaultValuesForTemplate,
+  displayMapFor,
+  validateTemplateValues,
+  validateRepeatingValues,
   type TemplateField,
 } from "@/lib/template/dataBinding";
-import { renderHtml } from "@/lib/render";
+import { renderDocument } from "@/lib/render/document";
 import { measureBridge } from "@/lib/billkit/bridge";
 import { measureDom } from "@/lib/billkit/measure-dom";
 import { CHECKED_MARK } from "@/lib/share/kit";
@@ -28,22 +33,13 @@ import {
   type SavedTemplate,
 } from "@/lib/client/templateStore";
 import type { BillTemplate } from "@/lib/template/types";
+import { readTemplateFile } from "@/lib/client/readTemplateFile";
 
 /**
  * Data-bound rendering page. The template carries only structure and
  * placeholders; this page derives a form from it, collects values, and
  * renders the final document  for preview, PDF download or print.
  */
-/**
- * No computed specs on this page.
- *
- * Computed totals live in a package manifest, and this page loads bare
- * template JSON - so there are none to apply. Held as a stable constant rather
- * than a fresh `[]` on every render so it cannot become a `useMemo` dependency
- * that changes identity each pass.
- */
-const NO_COMPUTED: ComputedSpec[] = [];
-
 export default function RenderClient() {
   // The page is client-only (ssr: false via next/dynamic), so browser storage
   // is readable in initialisers. The editor handoff wins over the library.
@@ -51,7 +47,11 @@ export default function RenderClient() {
     consumePendingTemplate(),
   );
   const [template, setTemplate] = useState<BillTemplate | null>(initialTemplate);
-  const [values, setValues] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    initialTemplate
+      ? defaultValuesForTemplate(initialTemplate, computedSpecsFor(initialTemplate).map((spec) => spec.key))
+      : {},
+  );
   const [saved, setSaved] = useState<SavedTemplate[]>(() => listTemplates());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -63,18 +63,23 @@ export default function RenderClient() {
   const fileRef2 = useRef<HTMLInputElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
+  const computed: ComputedSpec[] = useMemo(
+    () => template ? computedSpecsFor(template) : [],
+    [template],
+  );
+
   const fields: TemplateField[] = useMemo(
+    () => (template ? extractFillableFields(template, computed.map((spec) => spec.key)) : []),
+    [template, computed],
+  );
+  const allFields: TemplateField[] = useMemo(
     () => (template ? extractTemplateFields(template) : []),
     [template],
   );
 
-  const filled = useMemo(
-    () => (template ? fillTemplate(template, values) : null),
-    [template, values],
-  );
-
   const schema = useMemo(() => {
     if (!template) return undefined;
+    const computed = computedSpecsFor(template);
     const manifest: PackageManifest = {
       packageVersion: PACKAGE_VERSION,
       templateVersion: template.templateVersion,
@@ -91,7 +96,7 @@ export default function RenderClient() {
       assets: [],
       fonts: [],
       fields: [],
-      computed: [],
+      computed,
       checksums: {},
     };
     return deriveForm(manifest, template);
@@ -101,21 +106,22 @@ export default function RenderClient() {
    * Measure, then render.
    *
    * The same two steps `WebViewBillKitRuntime` takes on Android, in the same
-   * order and through the same two functions. Without this the preview is a
-   * different renderer from the one the app uses, and a variable-layout bill
-   * grows on the device but not here - so what an author checks in the preview
-   * is not what their customer sees.
+   * order and through the same two functions. measureBridge reads the authored
+   * template and applies computation and display shaping itself, and
+   * renderDocument runs the same rules in the same order for the output, so
+   * the preview here is the same document a customer's device prints rather
+   * than a third renderer's version of it.
    *
    * Both halves are pure, so this runs in a `useMemo` without an effect: the
    * measurement is a synchronous DOM read of detached elements, which is why
    * the render stays a plain function of state.
    */
   const rendered = useMemo(() => {
-    if (!filled || !template) return null;
+    if (!template) return null;
     const plan = measureBridge(
-      JSON.stringify(filled),
+      JSON.stringify(template),
       JSON.stringify(values),
-      JSON.stringify(NO_COMPUTED),
+      JSON.stringify(computed),
     );
     const measurements = measureDom(plan);
     // A field the solver widened is measured again at its new width, so the
@@ -126,38 +132,48 @@ export default function RenderClient() {
       if (!request) return undefined;
       return measureDom([{ ...request, width }])[id];
     };
-    return renderHtml(filled, values, { measurements, remeasure });
-  }, [filled, values, template]);
-
-  const renderedTemplate = useMemo(() => {
-    if (!filled || !rendered?.objects?.length) return filled;
-    return {
-      ...filled,
-      objects: rendered.objects,
-      document: {
-        ...filled.document,
-        width: rendered.page.width,
-        height: rendered.page.height,
-      },
-    };
-  }, [filled, template, rendered]);
+    return renderDocument(template, values, {
+      computed,
+      measurements,
+      remeasure,
+      display: displayMapFor(template),
+    });
+  }, [template, values, computed]);
 
   const setValue = (key: string, value: string) => {
     setValues((v) => ({ ...v, [key]: value }));
   };
 
   const fillSample = () => {
+    setError(null);
     setValues((prev) => {
       const next = { ...prev };
       for (const f of fields) {
         if (next[f.key]) continue;
         next[f.key] = sampleValue(f);
       }
+      for (const repeat of schema?.repeats ?? []) {
+        if (next[repeat.key]) continue;
+        const row = Object.fromEntries(repeat.columns.map((column) => {
+          const field = allFields.find((candidate) => candidate.key === column) ?? {
+            key: column,
+            label: column,
+            type: "text" as const,
+            source: "table" as const,
+            objectName: repeat.objectName,
+          };
+          return [column, sampleValue(field)];
+        }));
+        next[repeat.key] = JSON.stringify([row]);
+      }
       return next;
     });
   };
 
-  const clearAll = () => setValues({});
+  const clearAll = () => {
+    setError(null);
+    setValues({});
+  };
 
   const exportValues = () => {
     downloadText(
@@ -187,21 +203,49 @@ export default function RenderClient() {
   const importTemplate = async (file: File | undefined) => {
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text()) as BillTemplate;
+      const parsed = await readTemplateFile(file);
       setTemplate(parsed);
       setTemplateName(parsed.meta?.name ?? file.name.replace(/\.json$/i, ""));
-      setValues({});
-    } catch {
-      setError("That file is not a valid bill template JSON.");
+      setValues(defaultValuesForTemplate(parsed, computedSpecsFor(parsed).map((spec) => spec.key)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "That file is not a valid bill template JSON.");
     }
   };
 
+  const fieldErrors = [
+    ...validateTemplateValues(fields, values),
+    ...(template ? validateRepeatingValues(template, allFields, values) : []),
+  ];
+  const unfilledOptionalFields = fields.filter(
+    (field) => !field.required && !values[field.key]?.trim(),
+  );
+
   const runPdf = async () => {
-    if (!filled || !template) return;
+    if (!template) return;
+    const validation = fieldErrors;
+    if (validation.length) {
+      setError(validation.join(" "));
+      return;
+    }
     setBusy("pdf");
     setError(null);
     try {
-      await exportPdf(renderedTemplate ?? filled ?? template, rendered?.page);
+      // The print path is the engine: fonts from the bundled set, layout from
+      // those metrics, one display list, one vector PDF. There is no second
+      // renderer to drift from the preview.
+      const book = await loadFontBook();
+      const { bytes, refusals } = await renderToPdf(
+        { template, values, computed, title: template.meta?.name || "Document" },
+        book,
+      );
+      if (refusals.length) {
+        setError(`${refusals[0]}${refusals.length > 1 ? ` (+${refusals.length - 1} more)` : ""}`);
+        return;
+      }
+      downloadBlob(
+        new Blob([bytes.buffer as ArrayBuffer], { type: "application/pdf" }),
+        `${safeFilename(String(template.meta?.name ?? "document"))}.pdf`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -211,6 +255,11 @@ export default function RenderClient() {
 
   const runHtml = () => {
     if (!rendered || !template) return;
+    const validation = fieldErrors;
+    if (validation.length) {
+      setError(validation.join(" "));
+      return;
+    }
     downloadText(
       rendered.html,
       `${safeFilename(template.meta?.name ?? "document")}.html`,
@@ -219,6 +268,11 @@ export default function RenderClient() {
   };
 
   const runPrint = () => {
+    const validation = fieldErrors;
+    if (validation.length) {
+      setError(validation.join(" "));
+      return;
+    }
     iframeRef.current?.contentWindow?.print();
   };
 
@@ -255,7 +309,7 @@ export default function RenderClient() {
                         if (loaded) {
                           setTemplate(loaded);
                           setTemplateName(t.name);
-                          setValues({});
+                          setValues(defaultValuesForTemplate(loaded, computedSpecsFor(loaded).map((spec) => spec.key)));
                         }
                       }}
                     >
@@ -356,17 +410,23 @@ export default function RenderClient() {
               and the form appears here.
             </p>
           ) : (
-            <DynamicForm fields={fields} values={values} onChange={setValue} schema={schema} />
+            <DynamicForm
+              fields={fields}
+              values={values}
+              onChange={(key, value) => { setError(null); setValue(key, value); }}
+              schema={schema}
+              onError={setError}
+            />
           )}
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex items-center gap-1.5 border-b border-neutral-200 bg-white px-3 py-1.5">
-            <Button variant="primary" disabled={busy !== null} onClick={runPdf}>
+            <Button variant="primary" disabled={busy !== null || fieldErrors.length > 0} onClick={runPdf}>
               {busy === "pdf" ? "Rendering PDF…" : "Download PDF"}
             </Button>
-            <Button onClick={runHtml}>Download HTML</Button>
-            <Button onClick={runPrint}>Print</Button>
+            <Button disabled={fieldErrors.length > 0} onClick={runHtml}>Download HTML</Button>
+            <Button disabled={fieldErrors.length > 0} onClick={runPrint}>Print</Button>
             <div className="flex-1" />
             <button
               className="text-[11px] text-neutral-400 hover:text-neutral-600"
@@ -387,9 +447,13 @@ export default function RenderClient() {
                 variant="primary"
                 onClick={() => {
                   if (templateName.trim()) {
-                    saveTemplate(templateName.trim(), template);
-                    setSavePrompt(false);
-                    setSaved(listTemplates());
+                    if (saveTemplate(templateName.trim(), template)) {
+                      setSavePrompt(false);
+                      setSaved(listTemplates());
+                      setError(null);
+                    } else {
+                      setError("Could not save on this device. Browser storage may be full or unavailable.");
+                    }
                   }
                 }}
               >
@@ -412,6 +476,25 @@ export default function RenderClient() {
                 .join(", ")}
               {refusals.length > 3 ? "…" : ""}
             </p>
+          ) : null}
+          {fieldErrors.length > 0 ? (
+            <div role="alert" className="border-b border-red-100 bg-red-50 px-3 py-1.5 text-[11px] text-red-700">
+              <strong>Complete or correct these fields before generating the bill:</strong>{" "}
+              {fieldErrors.join(" ")}
+            </div>
+          ) : null}
+          {rendered?.warnings.length ? (
+            <div className="border-b border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+              <strong>Preview checks:</strong> {rendered.warnings.slice(0, 4).join(" · ")}
+              {rendered.warnings.length > 4 ? ` · and ${rendered.warnings.length - 4} more` : ""}
+            </div>
+          ) : null}
+          {unfilledOptionalFields.length > 0 ? (
+            <div className="border-b border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800">
+              <strong>Optional fields left blank:</strong>{" "}
+              {unfilledOptionalFields.slice(0, 5).map((field) => field.label).join(", ")}
+              {unfilledOptionalFields.length > 5 ? `, and ${unfilledOptionalFields.length - 5} more` : ""}. Blank placeholders are omitted from output.
+            </div>
           ) : null}
 
           <div className="editor-scroll min-h-0 flex-1 overflow-auto bg-neutral-200 p-4">
@@ -447,12 +530,12 @@ function sampleValue(field: TemplateField): string {
     return "1";
   }
   if (field.type === "currency") {
-    if (k.includes("tax_rate") || k.includes("rate")) return "18%";
-    if (k.includes("tax")) return "537.00";
-    if (k.includes("discount")) return "0.00";
-    if (k.includes("subtotal")) return "2,972.00";
-    if (k.includes("total")) return "3,510.00";
-    return "100.00";
+    if (k.includes("tax_rate") || k.includes("rate")) return "18";
+    if (k.includes("tax")) return "537";
+    if (k.includes("discount")) return "0";
+    if (k.includes("subtotal")) return "2972";
+    if (k.includes("total")) return "3510";
+    return "100";
   }
   if (k.includes("customer_name") || k === "customer") return "Sharma & Sons";
   if (k.includes("company_name") || k === "company") return "Acme Trading Co.";

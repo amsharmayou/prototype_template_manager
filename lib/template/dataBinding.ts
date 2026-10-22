@@ -14,6 +14,7 @@ import { extractVariables } from "./placeholders";
 import { resolveText } from "../render/values";
 import type {
   BillTemplate,
+  PlaceholderDisplay,
   PlaceholderSpec,
   TemplateObject,
 } from "./types";
@@ -40,6 +41,12 @@ export interface TemplateField {
   objectName: string;
   /** Max length of the generated input, when the spec sets one. */
   maxLength?: number;
+  required?: boolean;
+  defaultValue?: string;
+  min?: number;
+  max?: number;
+  /** How the field prints (date pattern, number grouping). */
+  display?: PlaceholderDisplay;
 }
 
 /** Tokens that unmistakably stand for a date. */
@@ -88,7 +95,7 @@ function inferType(key: string, source: FieldSource): FieldType {
  * in object order.
  */
 export function extractTemplateFields(template: BillTemplate): TemplateField[] {
-  const out: TemplateField[] = [];
+  const fields: TemplateField[] = [];
   const seen = new Set<string>();
 
   const specByKey = new Map<string, PlaceholderSpec>();
@@ -116,13 +123,18 @@ export function extractTemplateFields(template: BillTemplate): TemplateField[] {
     if (seen.has(key)) return;
     seen.add(key);
     const spec = specByKey.get(key);
-    out.push({
+    fields.push({
       key,
       label: spec?.label ? spec.label : humanizeKey(key),
       type: spec?.type ?? declaredType ?? declaredByKey.get(key) ?? inferType(key, source),
       source,
       objectName,
       maxLength: typeof spec?.maxLength === "number" && spec.maxLength > 0 ? spec.maxLength : undefined,
+      required: spec?.required === true,
+      defaultValue: typeof spec?.defaultValue === "string" ? spec.defaultValue : undefined,
+      min: typeof spec?.min === "number" ? spec.min : undefined,
+      max: typeof spec?.max === "number" ? spec.max : undefined,
+      display: spec?.display,
     });
   };
 
@@ -167,7 +179,181 @@ export function extractTemplateFields(template: BillTemplate): TemplateField[] {
       add(o.key, "field", o.name, declaredFieldType(o.fieldType));
     }
   }
+  return fields;
+}
+
+/** Validate customer values against the form contract before output is made. */
+export function validateTemplateValues(
+  fields: readonly TemplateField[],
+  values: Readonly<Record<string, string>>,
+): string[] {
+  const errors: string[] = [];
+  for (const field of fields) {
+    const value = values[field.key]?.trim() ?? "";
+    if (field.required && !value) {
+      errors.push(`${field.label} is required.`);
+      continue;
+    }
+    if (!value) continue;
+    if (field.maxLength && value.length > field.maxLength) {
+      errors.push(`${field.label} must be ${field.maxLength} characters or fewer.`);
+    }
+    if (field.type === "number" || field.type === "currency") {
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        errors.push(`${field.label} must be a valid number.`);
+      } else {
+        if (field.min !== undefined && number < field.min) errors.push(`${field.label} must be at least ${field.min}.`);
+        if (field.max !== undefined && number > field.max) errors.push(`${field.label} must be no more than ${field.max}.`);
+      }
+    }
+    if (field.type === "date") {
+      const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+      const year = match ? Number(match[1]) : 0;
+      const month = match ? Number(match[2]) : 0;
+      const day = match ? Number(match[3]) : 0;
+      const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+      const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+      if (!match || month < 1 || month > 12 || day < 1 || day > daysInMonth[month - 1]!) {
+        errors.push(`${field.label} must be a valid date.`);
+      }
+    }
+  }
+  return errors;
+}
+
+/** Fields a customer fills directly; row-local tokens stay inside their repeater. */
+export function extractFillableFields(
+  template: BillTemplate,
+  computedKeys: readonly string[] = [],
+): TemplateField[] {
+  const computed = new Set(computedKeys);
+  const repeatColumns = new Set<string>();
+  const outsideRepeat = new Set<string>();
+  for (const object of template.objects) {
+    if (object.type === "text" || object.type === "field") {
+      for (const key of extractVariables(object.text)) outsideRepeat.add(key);
+    } else if (object.type === "table") {
+      for (let row = 0; row < object.rows; row += 1) {
+        for (let col = 0; col < object.columns; col += 1) {
+          const text = object.cells[row * object.columns + col]?.text ?? "";
+          const inBand = object.repeat && row >= object.repeat.startRow && row <= object.repeat.endRow;
+          for (const key of extractVariables(text)) (inBand ? repeatColumns : outsideRepeat).add(key);
+        }
+      }
+    }
+  }
+  return extractTemplateFields(template).filter((field) =>
+    !computed.has(field.key) && !(repeatColumns.has(field.key) && !outsideRepeat.has(field.key)),
+  );
+}
+
+/** Defaults applied when a customer first opens a template's generated form. */
+export function defaultValuesForTemplate(
+  template: BillTemplate,
+  computedKeys: readonly string[] = [],
+): Record<string, string> {
+  return Object.fromEntries(
+    extractFillableFields(template, computedKeys)
+      .filter((field) => field.type !== "image" && field.defaultValue !== undefined)
+      .map((field) => [field.key, field.defaultValue!]),
+  );
+}
+
+/**
+ * How every token of a template prints, keyed for `applyDisplayFormats`.
+ *
+ * An explicit spec wins; without one the field's own inferred type decides:
+ * a date-shaped key prints in the conventional pattern, a money-shaped key
+ * groups its thousands the Indian way, a counting key groups too, and any key
+ * that names an identifier (`_no`, `code`, `hsn`) is left exactly as supplied.
+ * The map is what makes the same bundle print the same figures on every
+ * runtime without each host re-deriving the rule.
+ */
+export function displayMapFor(template: BillTemplate): Record<
+  string,
+  { date?: string; grouping?: "off" | "indian" | "western" }
+> {
+  const out: Record<string, { date?: string; grouping?: "off" | "indian" | "western" }> = {};
+  for (const spec of Array.isArray(template.meta?.placeholders) ? template.meta.placeholders : []) {
+    if (!spec || typeof spec.key !== "string" || spec.key.length === 0) continue;
+    if (!spec.display) continue;
+    const entry: { date?: string; grouping?: "off" | "indian" | "western" } = {};
+    if (typeof spec.display.date === "string") entry.date = spec.display.date;
+    if (
+      spec.display.grouping === "off" ||
+      spec.display.grouping === "indian" ||
+      spec.display.grouping === "western"
+    ) {
+      entry.grouping = spec.display.grouping;
+    }
+    if (entry.date !== undefined || entry.grouping !== undefined) out[spec.key] = entry;
+  }
+
+  for (const field of extractTemplateFields(template)) {
+    if (field.display) continue;
+    const key = field.key;
+    if (out[key]) continue;
+    if (key in out) continue;
+    if (field.type === "date") {
+      out[key] = { date: "DD/MM/YYYY" };
+      continue;
+    }
+    if (isIdentifierKey(key)) continue;
+    if (field.type === "currency") out[key] = { grouping: "indian" };
+  }
   return out;
+}
+
+/** Keys whose digits are names, not figures: grouping them lies about them. */
+const IDENTIFIER_KEY_RX = /(^|_)(no|nos|hsn|pincode|code|id|gstin|pan|phone|mobile|ifsc|account)$/i;
+
+function isIdentifierKey(key: string): boolean {
+  const seg = key.slice(key.lastIndexOf(".") + 1);
+  if (IDENTIFIER_KEY_RX.test(seg)) return true;
+  return /^s(or|l)\.?$/i.test(seg);
+}
+
+/** Validate each item row against the same field contract as ordinary inputs. */
+export function validateRepeatingValues(
+  template: BillTemplate,
+  fields: readonly TemplateField[],
+  values: Readonly<Record<string, string>>,
+): string[] {
+  const errors: string[] = [];
+  for (const table of template.objects) {
+    if (table.type !== "table" || !table.repeat) continue;
+    let rows: unknown;
+    try {
+      rows = JSON.parse(values[table.repeat.key] ?? "[]") as unknown;
+    } catch {
+      errors.push(`${table.name} rows could not be read.`);
+      continue;
+    }
+    if (!Array.isArray(rows)) {
+      errors.push(`${table.name} rows must be a list.`);
+      continue;
+    }
+    const columns = new Set<string>();
+    for (let row = table.repeat.startRow; row <= table.repeat.endRow; row += 1) {
+      for (let col = 0; col < table.columns; col += 1) {
+        for (const key of extractVariables(table.cells[row * table.columns + col]?.text ?? "")) columns.add(key);
+      }
+    }
+    const rowFields = fields.filter((field) => columns.has(field.key));
+    if (rows.length === 0 && rowFields.some((field) => field.required)) {
+      errors.push(`${table.name}: add at least one item row.`);
+    }
+    rows.forEach((row, index) => {
+      if (typeof row !== "object" || row === null || Array.isArray(row)) return;
+      const rowValues: Record<string, string> = {};
+      for (const [key, value] of Object.entries(row)) if (typeof value === "string") rowValues[key] = value;
+      for (const issue of validateTemplateValues(rowFields, rowValues)) {
+        errors.push(`${table.name}, row ${index + 1}: ${issue}`);
+      }
+    });
+  }
+  return errors;
 }
 
 /** Match a text that is exactly one `{{key}}` token. */
@@ -211,9 +397,13 @@ export function fillTemplate(
     if (o.type === "table") {
       return {
         ...o,
-        cells: o.cells.map((c) => {
+        cells: o.cells.map((c, index) => {
           const pure = PURE_TOKEN.exec(typeof c?.text === "string" ? c.text : "");
           const spec = pure ? byKey.get(pure[1]!) : undefined;
+          const row = Math.floor(index / o.columns);
+          const inRepeatBand = Boolean(
+            o.repeat && row >= o.repeat.startRow && row <= o.repeat.endRow,
+          );
           // TableCell has no font family or text colour of its own — style a
           // cell by the spec through the two fields it does have.
           return {
@@ -221,7 +411,12 @@ export function fillTemplate(
             fontSize: typeof spec?.fontSize === "number" && spec.fontSize > 0 ? spec.fontSize : c.fontSize,
             fontWeight: spec?.fontWeight ?? c.fontWeight,
             ...(spec?.color ? { color: spec.color } : {}),
-            text: resolveText(typeof c?.text === "string" ? c.text : "", values),
+            // Repeat-band values are row-local. Resolving them against the
+            // outer form first would replace every row with one global value
+            // before the repeat renderer has a chance to bind the row object.
+            text: inRepeatBand
+              ? (typeof c?.text === "string" ? c.text : "")
+              : resolveText(typeof c?.text === "string" ? c.text : "", values),
           };
         }),
       };

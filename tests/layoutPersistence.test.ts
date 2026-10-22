@@ -1,4 +1,4 @@
-﻿import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { serialiseObjects } from "@/lib/template/serialize";
 import type { SerialisableObject } from "@/lib/template/serialize";
@@ -239,7 +239,7 @@ describe("layout survives packaging", () => {
     delete (plain as { layout?: unknown }).layout;
     const pkg = buildPackage(plain);
 
-    expect(pkg.manifest.packageVersion).toBe(1);
+    expect(pkg.manifest.packageVersion).toBe(2);
     expect(resolvePackage(parsePackage(writePackage(pkg))).template.layout).toBeUndefined();
   });
 });

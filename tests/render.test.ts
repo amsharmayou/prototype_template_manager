@@ -894,6 +894,15 @@ describe("renderHtml", () => {
     expect(a).not.toBe(b);
   });
 
+  it("changes the hash when an authored calculation changes", () => {
+    const hashOf = (rate: string) => /data-template-hash="([0-9a-f]{64})"/.exec(
+      renderHtml(tpl((template) => {
+        template.meta.computed = [{ key: "tax", op: "percent", args: ["subtotal"], rateKey: rate }];
+      })).html,
+    )![1];
+    expect(hashOf("tax_rate")).not.toBe(hashOf("discount_rate"));
+  });
+
   it("refuses an unsupported template version instead of guessing", () => {
     expect(() => renderHtml(tpl((t) => { (t as never as { templateVersion: number }).templateVersion = 99; })))
       .toThrow(/version/i);
@@ -970,7 +979,7 @@ describe("renderHtml", () => {
       t.document.height = "1754" as never;
     }));
     expect(html).not.toContain("NaN");
-    expect(html).toContain("size: 794px 1123px");
+    expect(html).toContain("size: A4");
     expect(refusals.map((f) => f.field).sort()).toEqual(["page.height", "page.width"]);
   });
 
@@ -1087,7 +1096,7 @@ describe("renderHtml", () => {
     const t = tpl();
     delete (t as never as { document?: unknown }).document;
     const { html, refusals } = renderHtml(t);
-    expect(html).toContain("size: 794px 1123px");
+    expect(html).toContain("size: A4");
     expect(refusals.map((f) => f.field).sort()).toEqual(["page.height", "page.width"]);
   });
 

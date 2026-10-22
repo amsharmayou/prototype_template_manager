@@ -1,0 +1,10 @@
+{
+  "invoice_number": "RB-881",
+  "invoice_date": "2026-10-16",
+  "customer_name": "Table 12",
+  "customer_address": "Dine-in",
+  "table_no": "12",
+  "steward": "Ravi",
+  "gst_rate": "2.5",
+  "items": "[{\"qty\":\"2\",\"description\":\"Paneer tikka\",\"rate\":\"260\"},{\"qty\":\"3\",\"description\":\"Butter naan\",\"rate\":\"60\"},{\"qty\":\"1.5\",\"description\":\"Dal, half litre\",\"rate\":\"180\"}]"
+}

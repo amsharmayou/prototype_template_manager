@@ -11,12 +11,21 @@
  * never sees a file system, so it stays pure and runs in any JS runtime.
  */
 
-import type { ComputedSpec, PackageManifest } from "@/lib/package/format";
+import type { ComputedSpec, PackageManifest, RoundingMode } from "@/lib/package/format";
 import { deriveForm, type FormSchema } from "@/lib/package/form";
-import { renderHtml } from "@/lib/render";
+import { computeAll, withRowsComputed } from "@/lib/render/computed";
+import { renderDocument } from "@/lib/render/document";
+import { applyDisplayFormats } from "@/lib/render/formats";
 import { cellRequests } from "@/lib/render/rowHeights";
-import { fillTemplate } from "@/lib/template/dataBinding";
+import { displayMapFor, fillTemplate } from "@/lib/template/dataBinding";
 import type { BillTemplate } from "@/lib/template/types";
+
+/** Scale and rounding a host passes beside the values. */
+export interface BridgeOptions {
+  currencyScale?: number;
+  rounding?: RoundingMode;
+  qtyScale?: number;
+}
 
 /** What a host needs to build its form: the schema, as plain JSON. */
 export function deriveFormBridge(manifestJson: string, templateJson?: string): FormSchema {
@@ -94,21 +103,39 @@ export type Measurements = Record<string, { naturalWidth: number; height: number
  * Only objects carrying an expansion policy are asked about, and only on a
  * template that opted into variable layout: everything else renders at its
  * authored size, so measuring it would be cost with no reader.
+ *
+ * `templateJson` is the *authored* template. The values are filled here, after
+ * the computed rules have run and the display shapes have been applied, so the
+ * plan describes the text that will actually be painted: measuring
+ * "{{address}}" would size the box to the label, and measuring an unformatted
+ * figure would size it to digits the document never prints.
  */
 export function measureBridge(
   templateJson: string,
   valuesJson: string,
   computedJson?: string,
+  optionsJson?: string,
 ): MeasurementRequest[] {
   const template = JSON.parse(templateJson) as BillTemplate;
   if (!template || template.layout?.mode !== "variable") return [];
   const values = valuesJson ? (JSON.parse(valuesJson) as Record<string, string>) : {};
   const computed = computedJson ? (JSON.parse(computedJson) as ComputedSpec[]) : [];
+  const options = optionsJson ? (JSON.parse(optionsJson) as BridgeOptions) : {};
+  const scale = options.currencyScale ?? 2;
 
-  // Filled first, for the same reason `renderBridge` does it: the plan must
-  // describe the text that will be on the page, not the token standing in for
-  // it. Measuring "{{address}}" would size the box to the label.
-const filled = fillTemplate(template, values);
+  const augmented = withRowsComputed(template, computed, values, scale, {
+    rounding: options.rounding,
+    qtyScale: options.qtyScale,
+  });
+  const derived = computeAll(computed, augmented, scale, {
+    rounding: options.rounding,
+    qtyScale: options.qtyScale,
+  });
+  const shown = applyDisplayFormats(
+    { ...values, ...derived },
+    displayMapFor(template),
+  );
+  const filled = fillTemplate(template, shown);
   const requests: MeasurementRequest[] = [];
 
   for (const o of filled.objects) {
@@ -142,7 +169,7 @@ const filled = fillTemplate(template, values);
   // values are folded in first for the same reason the boxes above are filled
   // first: a trailer row reading a computed total must be measured as that
   // total, not as the token that produced it.
-  for (const cell of cellRequests(template, values, computed)) {
+  for (const cell of cellRequests(template, shown, computed, scale, options.rounding, options.qtyScale)) {
     requests.push({
       id: cell.id,
       kind: "cell",
@@ -165,12 +192,8 @@ const filled = fillTemplate(template, values);
 /**
  * Render a filled bill.
  *
- * `fillTemplate` runs first and `renderHtml` is handed the *unfilled* values
- * alongside it, which is deliberate: filling resolves the flat tokens inside
- * every cell, while `renderHtml` still needs the original values so it can
- * expand a repeat band from the `items` array and resolve the band's own
- * column tokens against each item.
- *
+ * Everything runs once, in `renderDocument`: computed rules, display shaping,
+ * binding and repeat bands, with the template's own identity hash in the page.
  * `measurementsJson` is optional and additive. Without it a variable-layout
  * template still renders, at its authored sizes - an honest fixed bill rather
  * than one padded out by a guess.
@@ -180,10 +203,12 @@ export function renderBridge(
   valuesJson: string,
   computedJson?: string,
   measurementsJson?: string,
+  optionsJson?: string,
 ): RenderBridgeResult {
   const template = JSON.parse(templateJson) as BillTemplate;
   const values = JSON.parse(valuesJson) as Record<string, string>;
   const computed = computedJson ? (JSON.parse(computedJson) as ComputedSpec[]) : [];
+  const options = optionsJson ? (JSON.parse(optionsJson) as BridgeOptions) : {};
 
   // A host's measurements are input, so they are treated like any other untrusted
   // payload: a malformed blob costs the template its growth, it does not cost
@@ -198,10 +223,15 @@ export function renderBridge(
     }
   }
 
-  const filled = fillTemplate(template, values);
-  const result = renderHtml(filled, values, { computed, measurements });
+  const result = renderDocument(template, values, {
+    computed,
+    measurements,
+    currencyScale: options.currencyScale,
+    rounding: options.rounding,
+    qtyScale: options.qtyScale,
+  });
 
-return {
+  return {
     html: result.html,
     variables: result.variables,
     warnings: result.warnings,

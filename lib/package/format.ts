@@ -8,7 +8,9 @@
  * pure renderer keep working unchanged.
  */
 
-export const PACKAGE_VERSION = 1 as const;
+export const PACKAGE_VERSION = 2 as const;
+/** Engine release this manifest format targets. Hosts refuse newer bundles. */
+export const ENGINE_VERSION = 1 as const;
 
 export type Severity = "error" | "warning";
 
@@ -19,6 +21,15 @@ export interface Issue {
   message: string;
 }
 
+/**
+ * How a computation rounds when it must drop precision: parsing an operand
+ * with more decimals than its scale, or bringing a product back to one scale.
+ * `"halfAwayFromZero"` is the bill-writing convention (-1.005 -> -1.01);
+ * `"halfEven"` is banker's rounding. Declared so a credit note and an invoice
+ * round by the same written rule instead of by whichever Math.* was nearest.
+ */
+export type RoundingMode = "halfAwayFromZero" | "halfEven";
+
 export interface ManifestDocument {
   width: number;
   height: number;
@@ -27,6 +38,25 @@ export interface ManifestDocument {
   paper: string;
   /** Decimal places money is held in; amounts are integers of this scale. */
   currencyScale: number;
+  /**
+   * Decimal places quantities are read at. Quantities are not money: a GSM
+   * weight or a 0.125 metre cut must survive to the product line intact, so
+   * they parse at their own scale (default 6) instead of the currency's.
+   */
+  quantityScale?: number;
+  /** The one rounding rule every computation follows. Default half-away. */
+  rounding?: RoundingMode;
+}
+
+/**
+ * How a field prints. Dates and numbers are stored as plain text and printed
+ * as plain text unless the author asks for a shape; this is that ask.
+ */
+export interface FieldDisplay {
+  /** Date output pattern with `DD`, `MM`, `YYYY` tokens. Default `DD/MM/YYYY`. */
+  date?: string;
+  /** Thousands grouping for numeric fields. Default `indian`. */
+  grouping?: "off" | "indian" | "western";
 }
 
 export interface ManifestAsset {
@@ -52,6 +82,8 @@ export interface ManifestFont {
   family: string;
   file: string;
   sha256: string;
+  /** The licence the font ships under, e.g. `OFL-1.1`. Present on v2 bundles. */
+  licence?: string;
 }
 
 /**
@@ -78,6 +110,7 @@ export interface ManifestField {
   objectName: string;
   maxLength?: number;
   required?: boolean;
+  defaultValue?: string;
   pattern?: string;
   min?: number;
   max?: number;
@@ -85,6 +118,8 @@ export interface ManifestField {
   /** Column keys of a repeating field, in band order. */
   columns?: string[];
   maxItems?: number;
+  /** How the field prints (date pattern, number grouping). */
+  display?: FieldDisplay;
 }
 
 export type ComputedOp =
@@ -138,6 +173,20 @@ export interface PackageManifest {
   fonts: ManifestFont[];
   fields: ManifestField[];
   computed: ComputedSpec[];
+  /**
+   * Engine release the bundle was written for. A host refuses to open a bundle
+   * that needs a newer engine than it runs; absence (v1 packages) means the
+   * bundle predates versioning and every field it uses must be one an engine
+   * of record 1 understands anyway.
+   */
+  engineVersion?: number;
+  /**
+   * SHA-256 of the template member as archived: the template's identity.
+   * Computed over the authored structure, never over a filled render, so a
+   * host can bind "the document I ship" to one immutable digest and verify it
+   * at open time. Required from packageVersion 2.
+   */
+  templateSha256?: string;
   /** SHA-256 per archive file, keyed by that path. */
   checksums: Record<string, string>;
 }
@@ -159,3 +208,14 @@ export interface Package {
   /** Digest of the manifest as read, verified by `validatePackage`. */
   manifestSha256?: string;
 }
+
+/** An opened, verified bundle: manifest plus every archive member. */
+export interface Bundle {
+  manifest: PackageManifest;
+  files: Map<string, Uint8Array>;
+}
+
+/** The one shape `openBundle` hands back, whichever way the door swung. */
+export type PackageOpen =
+  | { ok: true; bundle: Bundle; template: import("../template/types").BillTemplate; refusals: string[] }
+  | { ok: false; refusals: string[] };

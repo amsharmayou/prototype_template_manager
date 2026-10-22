@@ -20,6 +20,56 @@ import { gridSegments } from "@/lib/canvas/tableGrid";
 import { DEFAULT_STROKE_WIDTH } from "@/lib/canvas/strokeDefaults";
 import type { TableCell, TableRepeat, TextAlign } from "@/lib/template/types";
 
+/**
+ * Greedy word wrap inside a measured width, the same rule the CSS renderer
+ * applies with `pre-wrap` and `overflow-wrap: break-word` and the same one
+ * measurement assumes for a cell. An unbreakable token wider than the width
+ * is broken at the limit rather than past it.
+ */
+export function wrapCellText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string[] {
+  const out: string[] = [];
+  for (const paragraph of text.split("\n")) {
+    const words = paragraph.split(/\s+/).filter((w) => w.length > 0);
+    if (words.length === 0) {
+      out.push("");
+      continue;
+    }
+    let line = "";
+    for (const word of words) {
+      const candidate = line.length === 0 ? word : `${line} ${word}`;
+      if (ctx.measureText(candidate).width <= maxWidth) {
+        line = candidate;
+        continue;
+      }
+      if (line.length > 0) {
+        out.push(line);
+        line = "";
+      }
+      if (ctx.measureText(word).width <= maxWidth) {
+        line = word;
+        continue;
+      }
+      // A token wider than the column: break it where it stops fitting.
+      let chunk = "";
+      for (const ch of word) {
+        if (chunk.length > 0 && ctx.measureText(chunk + ch).width > maxWidth) {
+          out.push(chunk);
+          chunk = ch;
+        } else {
+          chunk += ch;
+        }
+      }
+      line = chunk;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 export interface BillTableSpec {
   colWidths: number[];
   rowHeights: number[];
@@ -534,17 +584,28 @@ export class BillTable extends FabricObject {
     } else {
       ctx.textAlign = "left";
     }
-    const ty = y + r.height / 2;
 
-    // Ellipsise rather than overflow the cell.
-    let display = text;
-    if (ctx.measureText(display).width > maxTextWidth) {
-      while (display.length > 1 && ctx.measureText(`${display}...`).width > maxTextWidth) {
-        display = display.slice(0, -1);
-      }
-      display = `${display}...`;
+    // The one wrap rule, shared with measurement and the renderer: a cell
+    // wraps inside its column, and the rows grow on every surface that
+    // agrees. A block taller than the cell is clipped to the cell box.
+    const availableWidth = maxTextWidth;
+    const availableHeight = Math.max(0, r.height - pad * 2);
+    const lines = wrapCellText(ctx, text, availableWidth);
+    const lineHeight = cell.fontSize * 1.2;
+    const blockHeight = lines.length * lineHeight;
+    const clipped = blockHeight > availableHeight;
+    if (clipped) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x + pad, y + pad, availableWidth, availableHeight);
+      ctx.clip();
     }
-    ctx.fillText(display, tx, ty, maxTextWidth);
+    let baseline = y + (r.height - blockHeight) / 2 + cell.fontSize * 0.8;
+    for (const line of lines) {
+      ctx.fillText(line, tx, baseline);
+      baseline += lineHeight;
+    }
+    if (clipped) ctx.restore();
   }
 
   /**

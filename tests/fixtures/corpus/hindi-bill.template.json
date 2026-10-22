@@ -1,0 +1,314 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 794,
+    "height": 1123
+  },
+  "meta": {
+    "name": "Hindi bill",
+    "modifiedAt": "",
+    "computed": [
+      {
+        "key": "line",
+        "op": "sum-times",
+        "args": [
+          "items.qty",
+          "items.rate"
+        ]
+      },
+      {
+        "key": "subtotal",
+        "op": "sum",
+        "args": [
+          "items.line"
+        ]
+      },
+      {
+        "key": "grand_total",
+        "op": "add",
+        "args": [
+          "subtotal"
+        ]
+      }
+    ]
+  },
+  "objects": [
+    {
+      "type": "text",
+      "id": "t_19",
+      "name": "शर्मा ट्रेडिंग कंपनी",
+      "roleKind": "static",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 20,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "शर्मा ट्रेडिंग कंपनी",
+      "y": 40
+    },
+    {
+      "type": "text",
+      "id": "t_20",
+      "name": "बिल संख्या: {{invoice_nu",
+      "roleKind": "variable",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "बिल संख्या: {{invoice_number}}",
+      "y": 100
+    },
+    {
+      "type": "text",
+      "id": "t_21",
+      "name": "दिनांक: {{invoice_date}}",
+      "roleKind": "variable",
+      "x": 480,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "दिनांक: {{invoice_date}}",
+      "y": 100
+    },
+    {
+      "type": "text",
+      "id": "t_22",
+      "name": "ग्राहक: {{customer_name}",
+      "roleKind": "variable",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "ग्राहक: {{customer_name}}",
+      "y": 130
+    },
+    {
+      "type": "table",
+      "id": "tab_23",
+      "name": "Item rows",
+      "roleKind": "static",
+      "x": 40,
+      "y": 420,
+      "width": 714,
+      "height": 90,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 2,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1,
+      "fill": "transparent",
+      "fontFamily": "Arimo",
+      "rows": 3,
+      "columns": 4,
+      "colWidths": [
+        60,
+        380,
+        130,
+        144
+      ],
+      "rowHeights": [
+        30,
+        30,
+        30
+      ],
+      "cells": [
+        {
+          "text": "मात्रा",
+          "textAlign": "center",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "विवरण",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "दर",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "राशि",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "{{items.qty}}",
+          "textAlign": "center",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{items.description}}",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{items.rate}}",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{line}}",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        }
+      ],
+      "borderColor": "#3a3a3a",
+      "borderWidth": 1,
+      "cellFill": "transparent",
+      "headerRow": true,
+      "headerFill": "#f2efe8",
+      "headerTextColor": "#101010",
+      "cellTextColor": "#101010",
+      "padding": 4,
+      "repeat": {
+        "key": "items",
+        "startRow": 1,
+        "endRow": 1,
+        "maxItems": 60,
+        "repeatHeader": true
+      },
+      "expansion": {
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "type": "text",
+      "id": "t_24",
+      "name": "कुल {{grand_total}}",
+      "roleKind": "variable",
+      "x": 470,
+      "width": 280,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "कुल {{grand_total}}",
+      "y": 660
+    }
+  ]
+}

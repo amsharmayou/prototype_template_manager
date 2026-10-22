@@ -1,0 +1,362 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 794,
+    "height": 1123
+  },
+  "meta": {
+    "name": "Restaurant bill",
+    "modifiedAt": "",
+    "computed": [
+      {
+        "key": "line",
+        "op": "sum-times",
+        "args": [
+          "orders.qty",
+          "orders.rate"
+        ]
+      },
+      {
+        "key": "food_total",
+        "op": "sum",
+        "args": [
+          "orders.line"
+        ]
+      },
+      {
+        "key": "cgst",
+        "op": "percent",
+        "args": [
+          "food_total"
+        ],
+        "rateKey": "gst_rate"
+      },
+      {
+        "key": "sgst",
+        "op": "percent",
+        "args": [
+          "food_total"
+        ],
+        "rateKey": "gst_rate"
+      },
+      {
+        "key": "grand_total",
+        "op": "add",
+        "args": [
+          "food_total",
+          "cgst",
+          "sgst"
+        ]
+      }
+    ]
+  },
+  "objects": [
+    {
+      "type": "text",
+      "id": "t_76",
+      "name": "RAVI'S KITCHEN",
+      "roleKind": "static",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 20,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "RAVI'S KITCHEN",
+      "y": 40
+    },
+    {
+      "type": "text",
+      "id": "t_77",
+      "name": "Table {{table_no}} - Ste",
+      "roleKind": "variable",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 10,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "Table {{table_no}} - Steward {{steward}}",
+      "y": 70
+    },
+    {
+      "type": "text",
+      "id": "t_78",
+      "name": "Bill {{invoice_number}} ",
+      "roleKind": "variable",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 10,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "Bill {{invoice_number}} - {{invoice_date}}",
+      "y": 90
+    },
+    {
+      "type": "table",
+      "id": "tab_79",
+      "name": "Item rows",
+      "roleKind": "static",
+      "x": 40,
+      "y": 420,
+      "width": 714,
+      "height": 90,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 2,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1,
+      "fill": "transparent",
+      "fontFamily": "Arimo",
+      "rows": 3,
+      "columns": 4,
+      "colWidths": [
+        60,
+        380,
+        130,
+        144
+      ],
+      "rowHeights": [
+        30,
+        30,
+        30
+      ],
+      "cells": [
+        {
+          "text": "Qty",
+          "textAlign": "center",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Item",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Rate",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Line",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "{{orders.qty}}",
+          "textAlign": "center",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{orders.description}}",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{orders.rate}}",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{line}}",
+          "textAlign": "right",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 11,
+          "fontWeight": "normal"
+        }
+      ],
+      "borderColor": "#3a3a3a",
+      "borderWidth": 1,
+      "cellFill": "transparent",
+      "headerRow": true,
+      "headerFill": "#f2efe8",
+      "headerTextColor": "#101010",
+      "cellTextColor": "#101010",
+      "padding": 4,
+      "repeat": {
+        "key": "orders",
+        "startRow": 1,
+        "endRow": 1,
+        "maxItems": 60,
+        "repeatHeader": true
+      },
+      "expansion": {
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "type": "text",
+      "id": "t_80",
+      "name": "Food {{food_total}}",
+      "roleKind": "variable",
+      "x": 470,
+      "width": 280,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "Food {{food_total}}",
+      "y": 620
+    },
+    {
+      "type": "text",
+      "id": "t_81",
+      "name": "CGST {{cgst}} - SGST {{s",
+      "roleKind": "variable",
+      "x": 470,
+      "width": 280,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "CGST {{cgst}} - SGST {{sgst}}",
+      "y": 646
+    },
+    {
+      "type": "text",
+      "id": "t_82",
+      "name": "TOTAL {{grand_total}}",
+      "roleKind": "variable",
+      "x": 470,
+      "width": 280,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 12,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "TOTAL {{grand_total}}",
+      "y": 672
+    }
+  ]
+}

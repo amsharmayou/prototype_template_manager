@@ -1,8 +1,17 @@
-import { extractTemplateFields, fillTemplate } from "@/lib/template/dataBinding";
-import { renderHtml } from "@/lib/render";
+import {
+  displayMapFor,
+  extractTemplateFields,
+  validateTemplateValues,
+  validateRepeatingValues,
+  type TemplateField,
+} from "@/lib/template/dataBinding";
+import { renderDocument } from "@/lib/render/document";
 import { measureBridge } from "@/lib/billkit/bridge";
 import { measureDom } from "@/lib/billkit/measure-dom";
+import { computedSpecsFor } from "@/lib/package/computedSpecs";
+import { deriveForm, type FormSchema } from "@/lib/package/form";
 import type { BillTemplate } from "@/lib/template/types";
+import { readImageFile } from "@/lib/client/readImageFile";
 
 /**
  * The browser half of a shared template: a page with no server, no framework
@@ -30,23 +39,20 @@ label.field>span em{font-style:normal;font-weight:400;font-family:ui-monospace,M
 input,select{width:100%;font:inherit;font-size:13px;padding:5px 7px;border:1px solid #cfd3d8;border-radius:5px;background:#fff}
 input[type=file]{padding:4px;font-size:11px}
 .hint{margin:2px 0 0;font-size:10px;color:#9ca3af}
+.repeat{margin-bottom:14px}
+.repeat>h2{margin:0 0 6px;font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:#6b7280}
+.repeat-row{display:flex;gap:6px;align-items:flex-end;border:1px solid #e3e5e8;border-radius:6px;padding:6px;margin-bottom:6px;background:#fafafa}
+.repeat-index{flex:none;font-size:10px;color:#9ca3af;padding-bottom:7px}
+.repeat-row label{flex:1;min-width:0;display:block;margin-bottom:0}
+.repeat-row span{display:block;font-size:10px;color:#6b7280;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repeat-remove{flex:none;width:24px;padding:6px 0;text-align:center;border-color:#e3e5e8;color:#9ca3af}
+.repeat-add{display:block;width:100%;border-style:dashed;color:#4a5570}
 .thumb{margin-top:4px;max-height:64px;border:1px solid #e3e5e8;border-radius:4px;object-fit:contain;background:#fff}
 iframe{flex:1;width:100%;height:100%;border:0;background:#8b8f96}
 #status{padding:6px 16px;font-size:11px;color:#6b7280;background:#fff;border-top:1px solid #e3e5e8}
 .empty{font-size:12px;color:#6b7280}
 @media print{header,form,#status{display:none}iframe{border:0}}
 `;
-
-const FIELD_GROUPS: Array<{ title: string; source: string }> = [
-  { title: "Text fields", source: "text" },
-  // Every object placed with the field tool reports `source: "field"`. This
-  // group used to be missing, so those fields were filtered out of the shared
-  // page entirely — and a template built only from fields reported that it had
-  // nothing to fill.
-  { title: "Fields", source: "field" },
-  { title: "Table cells", source: "table" },
-  { title: "Images & signatures", source: "image-placeholder" },
-];
 
 /** The three states a tickmark can be in, shared with the app-side form. */
 export const TICKMARK_OPTIONS: Array<{ value: string; label: string }> = [
@@ -69,21 +75,24 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-/** Build one input per discovered placeholder, grouped by where it came from. */
+/**
+ * Build one input per derived form field, grouped by the schema the package
+ * contract promises. The schema is the same `deriveForm` output the app's
+ * render page and a native host both read, so the shared page can never show
+ * a form that disagrees with either.
+ */
 function buildForm(
-  fields: ReturnType<typeof extractTemplateFields>,
+  schema: FormSchema,
+  fieldsByKey: ReadonlyMap<string, TemplateField>,
+  repeaterValues: Record<string, string>,
   onInput: () => void,
   imageValues: Record<string, string>,
+  onError: (message: string) => void,
 ): HTMLElement {
   const form = el("form");
   form.addEventListener("submit", (e) => e.preventDefault());
 
-  const groups = FIELD_GROUPS.map((g) => ({
-    title: g.title,
-    items: fields.filter((f) => f.source === g.source),
-  })).filter((g) => g.items.length > 0);
-
-  if (groups.length === 0) {
+  if (schema.fields.length === 0) {
     form.append(
       el(
         "p",
@@ -94,21 +103,140 @@ function buildForm(
     return form;
   }
 
-  for (const group of groups) {
+  for (const group of schema.groups) {
     const section = el("div", "group");
     section.append(el("h2", undefined, group.title));
-    for (const field of group.items) {
-      section.append(buildField(field, onInput, imageValues));
+    for (const field of group.fields) {
+      if (field.type === "repeating") {
+        const repeat = schema.repeats.find((r) => r.key === field.key);
+        if (repeat) {
+          section.append(
+            buildRepeater(repeat, fieldsByKey, repeaterValues, onInput, onError),
+          );
+        }
+        continue;
+      }
+      const declared = fieldsByKey.get(field.key);
+      if (declared) {
+        section.append(buildField(declared, onInput, imageValues, onError));
+      }
     }
     form.append(section);
   }
   return form;
 }
 
+/**
+ * The line-item editor a repeating field deserves: one row set per item, with
+ * add and remove, so a bill of five goods is typed as five rows instead of a
+ * JSON array into one textarea.
+ */
+function buildRepeater(
+  repeat: NonNullable<FormSchema["repeats"][number]>,
+  fieldsByKey: ReadonlyMap<string, TemplateField>,
+  repeaterValues: Record<string, string>,
+  onInput: () => void,
+  onError: (message: string) => void,
+): HTMLElement {
+  const wrap = el("div", "repeat");
+  wrap.dataset.repeatKey = repeat.key;
+  wrap.append(el("h2", undefined, repeat.objectName || repeat.key));
+
+  let rows: Record<string, string>[] = [];
+  try {
+    const parsed: unknown = JSON.parse(repeaterValues[repeat.key] ?? "[]");
+    if (Array.isArray(parsed)) {
+      rows = parsed.filter(
+        (r): r is Record<string, string> =>
+          typeof r === "object" && r !== null && !Array.isArray(r),
+      );
+    }
+  } catch {
+    rows = [];
+  }
+
+  const store = document.createElement("input");
+  store.type = "hidden";
+  store.name = repeat.key;
+  const commit = () => store.value = JSON.stringify(rows);
+
+  const rowsHost = el("div", "repeat-rows");
+
+  const rowAt = (row: Record<string, string>, index: number): HTMLElement => {
+    const line = el("div", "repeat-row");
+    line.append(el("span", "repeat-index", String(index + 1)));
+    for (const column of repeat.columns) {
+      const declared =
+        fieldsByKey.get(column) ??
+        ({
+          key: column,
+          label: column,
+          type: "text" as const,
+          source: "table" as const,
+          objectName: repeat.objectName,
+        } as TemplateField);
+      const holder = el("label");
+      const cap = el("span");
+      cap.textContent = declared.label;
+      holder.append(cap);
+      const input = document.createElement("input");
+      input.type = declared.type === "date" ? "date"
+        : declared.type === "number" || declared.type === "currency" ? "number"
+        : "text";
+      input.step = "any";
+      input.value = row[column] ?? "";
+      input.addEventListener("input", () => {
+        row[column] = input.value;
+        commit();
+        onInput();
+      });
+      holder.append(input);
+      line.append(holder);
+    }
+    const remove = el("button", "repeat-remove", "×");
+    remove.type = "button";
+    remove.title = "Remove this row";
+    remove.addEventListener("click", () => {
+      rows = rows.filter((r, i) => i !== index);
+      commit();
+      redraw();
+      onInput();
+    });
+    line.append(remove);
+    return line;
+  };
+
+  const redraw = () => {
+    rowsHost.replaceChildren(...rows.map((row, i) => rowAt(row, i)));
+    if (rows.length === 0) {
+      rowsHost.append(el("p", "hint", "No rows yet. Add one with the button below."));
+    }
+  };
+
+  const add = el("button", "repeat-add", `Add a row`);
+  add.type = "button";
+  add.addEventListener("click", () => {
+    if (rows.length >= repeat.maxItems) {
+      onError(`This table allows at most ${repeat.maxItems} rows.`);
+      return;
+    }
+    rows = [...rows, {}];
+    commit();
+    redraw();
+    onInput();
+  });
+
+  commit();
+  wrap.append(store, rowsHost, add);
+  redraw();
+  return wrap;
+}
+
 function buildField(
   field: ReturnType<typeof extractTemplateFields>[number],
   onInput: () => void,
   imageValues: Record<string, string>,
+  onError: (message: string) => void,
 ): HTMLLabelElement {
   const label = el("label", "field");
 
@@ -132,24 +260,18 @@ function buildField(
       const picked = file.files && file.files[0];
       file.value = "";
       if (!picked) return;
-      const reader = new FileReader();
-      reader.onload = () => {
+      void readImageFile(picked).then((dataUrl) => {
         const existing = holder.querySelector("img");
         const thumb = el("img", "thumb");
         thumb.alt = field.label;
-        thumb.src = typeof reader.result === "string" ? reader.result : "";
+        thumb.src = dataUrl;
         if (existing) existing.replaceWith(thumb);
         else holder.append(thumb);
-        // The value store is what refresh() merges into the rendered template,
-        // so the picked image actually reaches the preview.
-        if (typeof reader.result === "string") {
-          imageValues[field.key] = reader.result;
-        } else {
-          delete imageValues[field.key];
-        }
+        imageValues[field.key] = dataUrl;
         onInput();
-      };
-      reader.readAsDataURL(picked);
+      }).catch((error: unknown) => {
+        onError(error instanceof Error ? error.message : "Could not read this image.");
+      });
     });
     input = file;
   } else if (field.type === "tickmark") {
@@ -178,16 +300,17 @@ function buildField(
     input = el("input");
     input.type = "date";
     input.addEventListener("input", onInput);
-  } else if (field.type === "number") {
+  } else if (field.type === "number" || field.type === "currency") {
     input = el("input");
     input.type = "number";
     input.step = "any";
+    if (field.min !== undefined) input.min = String(field.min);
+    if (field.max !== undefined) input.max = String(field.max);
     input.addEventListener("input", onInput);
   } else {
     input = el("input");
     input.type = "text";
     if (field.maxLength) input.maxLength = field.maxLength;
-    if (field.type === "currency") input.placeholder = "0.00";
     input.addEventListener("input", onInput);
   }
 
@@ -200,6 +323,19 @@ function buildField(
   if (field.source === "image-placeholder") {
     label.append(el("p", "hint", "image slot"));
   }
+  input.required = field.required === true;
+  if (field.defaultValue !== undefined) {
+    if (input instanceof HTMLInputElement && input.type === "checkbox") {
+      input.checked = field.defaultValue === CHECKED_MARK;
+    } else {
+      input.value = field.defaultValue;
+    }
+  }
+  if (input instanceof HTMLInputElement && (field.type === "number" || field.type === "currency")) {
+    input.step = "any";
+    if (field.min !== undefined) input.min = String(field.min);
+    if (field.max !== undefined) input.max = String(field.max);
+  }
   return label;
 }
 
@@ -208,7 +344,9 @@ function buildField(
  *
  * Values are read back out of the form by `name` rather than tracked in a
  * parallel map, so there is exactly one source of truth for what has been typed
- * and no way for the preview and the inputs to disagree.
+ * and no way for the preview and the inputs to disagree. Repeating fields are
+ * the one exception: their DOM lives in the row editor and their single named
+ * input carries the rows as JSON.
  */
 export function bootShareKit(
   root: HTMLElement,
@@ -219,8 +357,38 @@ export function bootShareKit(
   style.textContent = STYLE;
   document.head.append(style);
 
-  const fields = extractTemplateFields(template);
+  const computed = computedSpecsFor(template);
+  const computedKeys = computed.map((spec) => spec.key);
+  const schema = deriveForm(
+    {
+      packageVersion: 2,
+      templateVersion: template.templateVersion,
+      name: template.meta?.name ?? "Untitled bill",
+      document: {
+        width: template.document?.width ?? 794,
+        height: template.document?.height ?? 1123,
+        unit: "px",
+        dpi: 96,
+        paper: "A4",
+        currencyScale: 2,
+      },
+      template: "template.json",
+      assets: [],
+      fonts: [],
+      fields: [],
+      computed,
+      checksums: {},
+    },
+    template,
+  );
+  const fieldsByKey = new Map<string, TemplateField>(
+    extractTemplateFields(template).map((f) => [f.key, f]),
+  );
+  const allFields = extractTemplateFields(template);
+  const repeaterValues: Record<string, string> = {};
+  for (const repeat of schema.repeats) repeaterValues[repeat.key] = "[]";
   const imageValues: Record<string, string> = {};
+  let validationErrors: string[] = [];
 
   const header = el("header");
   const title = el("h1", undefined, template.meta?.name || "Document");
@@ -232,7 +400,7 @@ export function bootShareKit(
 
   const shell = el("main");
   const refresh = () => {
-    const values: Record<string, string> = { ...imageValues };
+    const values: Record<string, string> = { ...imageValues, ...repeaterValues };
     for (const element of Array.from(root.querySelectorAll("input,select"))) {
       const named = element as HTMLInputElement;
       if (!named.name) continue;
@@ -261,8 +429,21 @@ export function bootShareKit(
     // a variable-layout bill grows in the app and in the editor's preview but
     // not in the page an author sends to a customer, which is precisely the
     // artefact nobody is checking.
-    const filled = fillTemplate(template, values);
-    const plan = measureBridge(JSON.stringify(filled), JSON.stringify(values));
+    const fillable = allFields.filter(
+      (f) =>
+        f.type !== "image" &&
+        !computedKeys.includes(f.key) &&
+        !schema.repeats.some((r) => r.key === f.key),
+    );
+    validationErrors = [
+      ...validateTemplateValues(fillable, values),
+      ...validateRepeatingValues(template, allFields, values),
+    ];
+    const plan = measureBridge(
+      JSON.stringify(template),
+      JSON.stringify(values),
+      JSON.stringify(computed),
+    );
     const measurements = measureDom(plan);
     // Same second measurement pass the app performs: a field the solver widened
     // is measured again at its final width, so a shared page shows the height
@@ -272,21 +453,37 @@ export function bootShareKit(
       if (!request) return undefined;
       return measureDom([{ ...request, width }])[id];
     };
-    const rendered = renderHtml(filled, undefined, { measurements, remeasure });
+    const rendered = renderDocument(template, values, {
+      computed,
+      measurements,
+      remeasure,
+      display: displayMapFor(template),
+    });
     preview.srcdoc = rendered.html;
-    const missing = rendered.variables.filter((v) => !(v in values) || !values[v]);
-    status.textContent = missing.length
+    const missing = rendered.variables.filter((v) => {
+      if (schema.repeats.some((r) => r.key === v || r.columns.includes(v))) return false;
+      if (computedKeys.includes(v)) return false;
+      const field = fillable.find((f) => f.key === v);
+      return field === undefined ? true : !(v in values) || !values[v];
+    });
+    status.textContent = validationErrors.length
+      ? validationErrors.join(" ")
+      : missing.length
       ? `${missing.length} placeholder${missing.length === 1 ? "" : "s"} still empty: ${missing.join(", ")}`
       : "All placeholders filled.";
   };
 
-  const form = buildForm(fields, refresh, imageValues);
+  const form = buildForm(schema, fieldsByKey, repeaterValues, refresh, imageValues, (message) => {
+    status.textContent = message;
+  });
 
   root.replaceChildren(header, shell);
   shell.append(form, preview);
   root.append(status);
 
   printButton.addEventListener("click", () => {
+    refresh();
+    if (validationErrors.length) return;
     preview.contentWindow?.focus();
     preview.contentWindow?.print();
   });

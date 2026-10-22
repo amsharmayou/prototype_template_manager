@@ -1,5 +1,5 @@
-import type { ComputedSpec, Package, PackageManifest } from "./format";
-import { PACKAGE_VERSION } from "./format";
+import type { ComputedSpec, ManifestFont, Package, PackageManifest, RoundingMode } from "./format";
+import { ENGINE_VERSION, PACKAGE_VERSION } from "./format";
 import { sha256HexBytes } from "../render/sha256";
 import { extractTemplateFields } from "../template/dataBinding";
 import { extractVariables } from "../template/placeholders";
@@ -10,6 +10,21 @@ import { strToU8, zipSync } from "fflate";
 export interface BuildOptions {
   computed?: ComputedSpec[];
   currencyScale?: number;
+  /** Decimal places quantities are read at; omitted keeps the renderer default. */
+  quantityScale?: number;
+  /** The written rounding rule recorded in the manifest. */
+  rounding?: RoundingMode;
+  /** Font files archived under `fonts/`, hashed and licensed in the manifest. */
+  fonts?: BundledFont[];
+}
+
+/** One font file the bundle archives. */
+export interface BundledFont {
+  family: string;
+  licence?: string;
+  /** Archive-relative path, e.g. `fonts/Arimo-Regular.ttf`. */
+  file: string;
+  bytes: Uint8Array;
 }
 
 /**
@@ -188,6 +203,10 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
       source: f.source,
       objectName: f.objectName,
       ...(f.maxLength !== undefined ? { maxLength: f.maxLength } : {}),
+      ...(f.required ? { required: true } : {}),
+      ...(f.defaultValue !== undefined ? { defaultValue: f.defaultValue } : {}),
+      ...(f.min !== undefined ? { min: f.min } : {}),
+      ...(f.max !== undefined ? { max: f.max } : {}),
     }),
   );
 
@@ -234,27 +253,60 @@ export function buildPackage(template: BillTemplate, options: BuildOptions = {})
     else fields[at] = { ...fields[at], ...repeat };
   }
 
+  const fonts = Array.isArray(options.fonts) ? options.fonts : [];
+  const manifestFonts: ManifestFont[] = [];
+  for (const font of fonts) {
+    if (!font || typeof font.file !== "string" || font.file.length === 0) {
+      throw new Error("a bundled font must name its archive path");
+    }
+    if (!font.file.startsWith("fonts/") || font.file.includes("..")) {
+      throw new Error(`bundled font path ${font.file} must live under fonts/`);
+    }
+    if (files.has(font.file)) {
+      throw new Error(`bundled font path ${font.file} collides with an archived member`);
+    }
+    const bytes = font.bytes instanceof Uint8Array && font.bytes.length > 0 ? font.bytes : null;
+    if (!bytes) {
+      throw new Error(`bundled font ${font.file} has no bytes`);
+    }
+    files.set(font.file, bytes);
+    manifestFonts.push({
+      family: font.family,
+      file: font.file,
+      sha256: sha256HexBytes(bytes),
+      ...(font.licence !== undefined ? { licence: font.licence } : {}),
+    });
+  }
+
   const checksums: Record<string, string> = {};
   for (const [name, bytes] of files) checksums[name] = sha256HexBytes(bytes);
+
+  const docSpec: PackageManifest["document"] = {
+    width: template.document?.width ?? 794,
+    height: template.document?.height ?? 1123,
+    unit: "px",
+    dpi: 96,
+    paper:
+      template.document?.width === 794 && template.document?.height === 1123 ? "A4" : "custom",
+    currencyScale: options.currencyScale ?? 2,
+  };
+  if (typeof options.quantityScale === "number") docSpec.quantityScale = options.quantityScale;
+  if (options.rounding !== undefined) docSpec.rounding = options.rounding;
 
   const manifest: PackageManifest = {
     packageVersion: PACKAGE_VERSION,
     templateVersion: template.templateVersion,
     name: template.meta?.name ?? "Untitled bill",
-    document: {
-      width: template.document?.width ?? 794,
-      height: template.document?.height ?? 1123,
-      unit: "px",
-      dpi: 96,
-      paper:
-        template.document?.width === 794 && template.document?.height === 1123 ? "A4" : "custom",
-      currencyScale: options.currencyScale ?? 2,
-    },
+    document: docSpec,
     template: "template.json",
     assets,
-    fonts: [],
+    fonts: manifestFonts,
     fields,
     computed: options.computed ?? [],
+    engineVersion: ENGINE_VERSION,
+    // The identity of the template, over its authored bytes: the one fact a
+    // host can check a received bundle against before anything is rendered.
+    templateSha256: checksums["template.json"]!,
     checksums,
   };
 

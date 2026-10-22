@@ -25,9 +25,15 @@ import type {
 import { PACKAGE_VERSION } from "./format";
 import { validateLayout } from "./layout";
 import { sha256HexBytes } from "../render/sha256";
-import { TEMPLATE_VERSION } from "../template/types";
+import { DEFAULT_REPEAT_MAX_ITEMS, TEMPLATE_VERSION } from "../template/types";
 
 import { strToU8 } from "fflate";
+
+const SUPPORTED_PACKAGE_VERSIONS = new Set([1, PACKAGE_VERSION]);
+
+const ROUNDING_MODES = new Set(["halfAwayFromZero", "halfEven"]);
+
+const GROUPING_MODES = new Set(["off", "indian", "western"]);
 
 const FIELD_TYPES = new Set([
   "text",
@@ -418,13 +424,24 @@ export function validateManifest(
     }
   }
 
-  if (manifest.packageVersion !== PACKAGE_VERSION) {
+  const declared = typeof manifest.packageVersion;
+  const version = manifest.packageVersion;
+  if (
+    declared !== "number" ||
+    !Number.isInteger(version) ||
+    !SUPPORTED_PACKAGE_VERSIONS.has(version as 1 | 2)
+  ) {
     out.push(
       issue(
         "packageVersion",
-        `package version ${String(manifest.packageVersion)} is not supported; this build reads ${PACKAGE_VERSION}`,
+        `package version ${String(version)} is not supported; this build reads up to ${PACKAGE_VERSION}`,
       ),
     );
+  }
+  const v2 = version === PACKAGE_VERSION;
+  const engineVersion = manifest.engineVersion;
+  if (engineVersion !== undefined && (!Number.isInteger(engineVersion) || (engineVersion as number) < 1)) {
+    out.push(issue("engineVersion", "engineVersion must be a positive integer"));
   }
   const tplVersion = manifest.templateVersion;
   if (typeof tplVersion !== "number" || !Number.isFinite(tplVersion)) {
@@ -455,6 +472,15 @@ export function validateManifest(
     if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 6) {
       out.push(issue("document.currencyScale", "currencyScale must be an integer from 0 to 6"));
     }
+    if (doc.quantityScale !== undefined) {
+      const qs = doc.quantityScale;
+      if (typeof qs !== "number" || !Number.isInteger(qs) || qs < 0 || qs > 6) {
+        out.push(issue("document.quantityScale", "quantityScale must be an integer from 0 to 6"));
+      }
+    }
+    if (doc.rounding !== undefined && (typeof doc.rounding !== "string" || !ROUNDING_MODES.has(doc.rounding))) {
+      out.push(issue("document.rounding", 'rounding must be "halfAwayFromZero" or "halfEven"'));
+    }
   }
 
   const templatePath = manifest.template;
@@ -480,6 +506,19 @@ export function validateManifest(
     } catch {
       // A template member that is not JSON at all is the renderer's problem to
       // report; this pass only adds layout issues on top of what is readable.
+    }
+    // The template's identity hash is the fact "this bundle is this template".
+    // It is computed over the authored template bytes at build time and must
+    // match here; on a v2 manifest it is also mandatory, because a bundle that
+    // cannot state what template it carries cannot be verified as the one that
+    // was shipped.
+    const templateSha = manifest.templateSha256;
+    if (typeof templateSha === "string" && templateSha.length > 0) {
+      if (sha256HexBytes(templateBytes) !== templateSha) {
+        out.push(issue("templateSha256", "template does not match the identity hash the manifest records"));
+      }
+    } else if (v2) {
+      out.push(issue("templateSha256", "a v2 manifest must carry the sha256 of its template member"));
     }
   }
 
@@ -507,6 +546,9 @@ export function validateManifest(
     }
     if (typeof f.file !== "string" || !files.has(f.file)) {
       out.push(issue(`fonts[${i}].file`, `font file ${String(f.file)} is not in the archive`));
+    }
+    if (typeof f.licence === "string" && f.licence.trim().length === 0) {
+      out.push(issue(`fonts[${i}].licence`, "licence, when given, must be a non-empty string"));
     }
   });
 
@@ -543,8 +585,40 @@ export function validateManifest(
     if (f.type === "repeating" && (!Array.isArray(f.columns) || f.columns.length === 0)) {
       out.push(issue(`fields[${i}].columns`, "a repeating field must declare its columns"));
     }
+    if (f.type === "repeating" && f.maxItems !== undefined &&
+      (!Number.isInteger(f.maxItems) || (f.maxItems as number) < 1 || (f.maxItems as number) > DEFAULT_REPEAT_MAX_ITEMS)) {
+      out.push(issue(`fields[${i}].maxItems`, `maximum row count must be between 1 and ${DEFAULT_REPEAT_MAX_ITEMS}`));
+    }
     if (f.pattern !== undefined && typeof f.pattern !== "string") {
       out.push(issue(`fields[${i}].pattern`, "pattern must be a string"));
+    }
+    if (f.defaultValue !== undefined && typeof f.defaultValue !== "string") {
+      out.push(issue(`fields[${i}].defaultValue`, "default value must be a string"));
+    }
+    if (f.required !== undefined && typeof f.required !== "boolean") {
+      out.push(issue(`fields[${i}].required`, "required must be a boolean"));
+    }
+    if (f.min !== undefined && (typeof f.min !== "number" || !Number.isFinite(f.min))) {
+      out.push(issue(`fields[${i}].min`, "minimum must be a finite number"));
+    }
+    if (f.max !== undefined && (typeof f.max !== "number" || !Number.isFinite(f.max))) {
+      out.push(issue(`fields[${i}].max`, "maximum must be a finite number"));
+    }
+    if (typeof f.min === "number" && typeof f.max === "number" && f.min > f.max) {
+      out.push(issue(`fields[${i}]`, "minimum cannot exceed maximum"));
+    }
+    if (f.display !== undefined) {
+      if (!isRecord(f.display)) {
+        out.push(issue(`fields[${i}].display`, "display must be an object"));
+      } else {
+        if (f.display.date !== undefined && typeof f.display.date !== "string") {
+          out.push(issue(`fields[${i}].display.date`, "date pattern must be a string"));
+        }
+        if (f.display.grouping !== undefined &&
+          (typeof f.display.grouping !== "string" || !GROUPING_MODES.has(f.display.grouping))) {
+          out.push(issue(`fields[${i}].display.grouping`, 'grouping must be "off", "indian" or "western"'));
+        }
+      }
     }
     // Only repeating fields have columns, so only they can be a path head, and
     // only a field whose key was *accepted* becomes one: a key rejected above as
@@ -670,20 +744,33 @@ export function validateManifest(
 
   reportComputedCycles(computed, computedKeys, out);
 
+  // Checksums are mandatory, not optional: a file a digest does not cover is a
+  // file whose corruption is invisible, and "the archive were honest today" is
+  // not a property a consumer can verify. Every archive member outside the
+  // manifest must have an entry, and the entry must match.
   const checksums = manifest.checksums;
-  if (checksums !== undefined) {
-    if (!isRecord(checksums)) {
-      out.push(issue("checksums", "checksums must be an object"));
-    } else {
-      for (const [path, expected] of Object.entries(checksums)) {
-        const bytes = files.get(path);
-        if (!bytes) {
-          out.push(issue(`checksums.${path}`, "checksum given for a file not in the archive"));
-          continue;
-        }
-        if (typeof expected !== "string" || sha256HexBytes(bytes) !== expected) {
-          out.push(issue(`checksums.${path}`, `checksum does not match the archived ${path}`));
-        }
+  if (!isRecord(checksums)) {
+    out.push(issue("checksums", "checksums must be an object"));
+  } else {
+    const covered = new Set<string>();
+    for (const [path, expected] of Object.entries(checksums)) {
+      const bytes = files.get(path);
+      if (!path) {
+        out.push(issue("checksums", "checksum path must be a non-empty string"));
+        continue;
+      }
+      covered.add(path);
+      if (!bytes) {
+        out.push(issue(`checksums.${path}`, "checksum given for a file not in the archive"));
+        continue;
+      }
+      if (typeof expected !== "string" || sha256HexBytes(bytes) !== expected) {
+        out.push(issue(`checksums.${path}`, `checksum does not match the archived ${path}`));
+      }
+    }
+    for (const file of files.keys()) {
+      if (!covered.has(file)) {
+        out.push(issue(`checksums.${file}`, "no checksum for an archived file; every member must be covered"));
       }
     }
   }

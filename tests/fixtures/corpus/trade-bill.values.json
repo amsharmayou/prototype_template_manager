@@ -1,0 +1,7 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "items": "[{\"qty\":\"12.375\",\"description\":\"Fabric A, per metre\",\"rate\":\"425.55\"},{\"qty\":\"0.0625\",\"description\":\"Fabric B, per metre\",\"rate\":\"1250\"},{\"qty\":\"7\",\"description\":\"Lining, per metre\",\"rate\":\"99.99\"}]"
+}

@@ -405,9 +405,12 @@ function cellStyle(
     `color: ${ink}`,
     `background: ${isHeader ? t.headerFill : t.cellFill}`,
     `text-align: ${align(cell?.textAlign, r, `${o.id}.cellTextAlign`)}`,
-    "white-space: pre",
-    // A traced cell is clipped rather than ellipsised: an ellipsis is a claim
-    // about the content that the scan itself does not make.
+    // The one wrap rule, the same one measurement applies: a cell wraps inside
+    // its column, so a full line prints on two lines instead of being clipped
+    // at a boundary the row height already made room for. Overflow stays the
+    // boundary guarantee for a single unbreakable token.
+    "white-space: pre-wrap",
+    "overflow-wrap: break-word",
     "overflow: hidden",
   ]);
 }

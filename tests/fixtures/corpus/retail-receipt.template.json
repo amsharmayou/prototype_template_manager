@@ -1,0 +1,352 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 384,
+    "height": 700
+  },
+  "meta": {
+    "name": "Retail receipt",
+    "modifiedAt": "",
+    "computed": [
+      {
+        "key": "line",
+        "op": "sum-times",
+        "args": [
+          "items.qty",
+          "items.rate"
+        ]
+      },
+      {
+        "key": "subtotal",
+        "op": "sum",
+        "args": [
+          "items.line"
+        ]
+      },
+      {
+        "key": "grand_total",
+        "op": "add",
+        "args": [
+          "subtotal"
+        ]
+      },
+      {
+        "key": "change_due",
+        "op": "subtract",
+        "args": [
+          "cash_tendered",
+          "grand_total"
+        ]
+      }
+    ]
+  },
+  "objects": [
+    {
+      "type": "text",
+      "id": "t_12",
+      "name": "SHARMA GENERAL STORE",
+      "roleKind": "static",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "SHARMA GENERAL STORE",
+      "y": 20
+    },
+    {
+      "type": "text",
+      "id": "t_13",
+      "name": "{{invoice_number}} - {{i",
+      "roleKind": "variable",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 10,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "{{invoice_number}} - {{invoice_date}}",
+      "y": 44
+    },
+    {
+      "type": "text",
+      "id": "t_14",
+      "name": "{{customer_name}}",
+      "roleKind": "variable",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 11,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "{{customer_name}}",
+      "y": 64
+    },
+    {
+      "type": "table",
+      "id": "tab_15",
+      "name": "Item rows",
+      "roleKind": "static",
+      "x": 24,
+      "y": 90,
+      "width": 336,
+      "height": 90,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 2,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1,
+      "fill": "transparent",
+      "fontFamily": "Arimo",
+      "rows": 3,
+      "columns": 4,
+      "colWidths": [
+        40,
+        156,
+        70,
+        70
+      ],
+      "rowHeights": [
+        30,
+        30,
+        30
+      ],
+      "cells": [
+        {
+          "text": "Qty",
+          "textAlign": "center",
+          "fontSize": 9,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Item",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Rate",
+          "textAlign": "right",
+          "fontSize": 9,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Line",
+          "textAlign": "right",
+          "fontSize": 9,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "{{items.qty}}",
+          "textAlign": "center",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{items.description}}",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{items.rate}}",
+          "textAlign": "right",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{line}}",
+          "textAlign": "right",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 9,
+          "fontWeight": "normal"
+        }
+      ],
+      "borderColor": "#3a3a3a",
+      "borderWidth": 1,
+      "cellFill": "transparent",
+      "headerRow": true,
+      "headerFill": "#f2efe8",
+      "headerTextColor": "#101010",
+      "cellTextColor": "#101010",
+      "padding": 4,
+      "repeat": {
+        "key": "items",
+        "startRow": 1,
+        "endRow": 1,
+        "maxItems": 60,
+        "repeatHeader": true
+      },
+      "expansion": {
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "type": "text",
+      "id": "t_16",
+      "name": "TOTAL {{grand_total}}",
+      "roleKind": "variable",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 14,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "TOTAL {{grand_total}}",
+      "y": 420
+    },
+    {
+      "type": "text",
+      "id": "t_17",
+      "name": "Cash: {{cash_tendered}}",
+      "roleKind": "variable",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "Cash: {{cash_tendered}}",
+      "y": 450
+    },
+    {
+      "type": "text",
+      "id": "t_18",
+      "name": "Change: {{change_due}}",
+      "roleKind": "variable",
+      "x": 24,
+      "width": 336,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "right",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "Change: {{change_due}}",
+      "y": 470
+    }
+  ]
+}

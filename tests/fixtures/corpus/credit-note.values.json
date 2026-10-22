@@ -1,0 +1,8 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "against_invoice": "INV-2026-1042",
+  "items": "[{\"qty\":\"-2\",\"description\":\"A4 notebook, 200 pages\",\"rate\":\"120.00\"}]"
+}

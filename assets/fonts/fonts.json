@@ -1,0 +1,148 @@
+{
+  "fonts": [
+    {
+      "file": "fonts/Arimo_400Regular.ttf",
+      "family": "Arimo",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "Arial",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/arimo/OFL.txt"
+    },
+    {
+      "file": "fonts/Arimo_400Regular_Italic.ttf",
+      "family": "Arimo",
+      "weight": 400,
+      "italic": true,
+      "systemAlias": "Arial",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/arimo/OFL.txt"
+    },
+    {
+      "file": "fonts/Arimo_700Bold.ttf",
+      "family": "Arimo",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "Arial",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/arimo/OFL.txt"
+    },
+    {
+      "file": "fonts/Arimo_700Bold_Italic.ttf",
+      "family": "Arimo",
+      "weight": 700,
+      "italic": true,
+      "systemAlias": "Arial",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/arimo/OFL.txt"
+    },
+    {
+      "file": "fonts/Tinos_400Regular.ttf",
+      "family": "Tinos",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "Times New Roman",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/tinos/OFL.txt"
+    },
+    {
+      "file": "fonts/Tinos_400Regular_Italic.ttf",
+      "family": "Tinos",
+      "weight": 400,
+      "italic": true,
+      "systemAlias": "Times New Roman",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/tinos/OFL.txt"
+    },
+    {
+      "file": "fonts/Tinos_700Bold.ttf",
+      "family": "Tinos",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "Times New Roman",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/tinos/OFL.txt"
+    },
+    {
+      "file": "fonts/Tinos_700Bold_Italic.ttf",
+      "family": "Tinos",
+      "weight": 700,
+      "italic": true,
+      "systemAlias": "Times New Roman",
+      "licence": "Apache-2.0",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/apache/tinos/OFL.txt"
+    },
+    {
+      "file": "fonts/Carlito_400Regular.ttf",
+      "family": "Carlito",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "Calibri",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/carlito/OFL.txt"
+    },
+    {
+      "file": "fonts/Carlito_700Bold.ttf",
+      "family": "Carlito",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "Calibri",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/carlito/OFL.txt"
+    },
+    {
+      "file": "fonts/Caladea_400Regular.ttf",
+      "family": "Caladea",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "Cambria",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/caladea/OFL.txt"
+    },
+    {
+      "file": "fonts/Caladea_700Bold.ttf",
+      "family": "Caladea",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "Cambria",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/caladea/OFL.txt"
+    },
+    {
+      "file": "fonts/NotoSans_400Regular.ttf",
+      "family": "Noto Sans",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/notosans/OFL.txt"
+    },
+    {
+      "file": "fonts/NotoSans_700Bold.ttf",
+      "family": "Noto Sans",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/notosans/OFL.txt"
+    },
+    {
+      "file": "fonts/NotoSansDevanagari_400Regular.ttf",
+      "family": "Noto Sans Devanagari",
+      "weight": 400,
+      "italic": false,
+      "systemAlias": "",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/notosansdevanagari/OFL.txt"
+    },
+    {
+      "file": "fonts/NotoSansDevanagari_700Bold.ttf",
+      "family": "Noto Sans Devanagari",
+      "weight": 700,
+      "italic": false,
+      "systemAlias": "",
+      "licence": "OFL-1.1",
+      "licenceUrl": "https://github.com/google/fonts/blob/main/ofl/notosansdevanagari/OFL.txt"
+    }
+  ]
+}

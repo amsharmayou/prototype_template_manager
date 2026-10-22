@@ -1,0 +1,8 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "valid_until": "2026-11-05",
+  "items": "[{\"qty\":\"1\",\"description\":\"Site survey\",\"rate\":\"15000\"},{\"qty\":\"3\",\"description\":\"Commissioning visit\",\"rate\":\"4500.50\"}]"
+}

@@ -1,5 +1,5 @@
 import { collectDocumentVariables } from "@/lib/template/placeholders";
-import type { ComputedSpec } from "@/lib/package/format";
+import type { ComputedSpec, RoundingMode } from "@/lib/package/format";
 import {
   A4_HEIGHT,
   A4_WIDTH,
@@ -9,13 +9,13 @@ import {
 } from "@/lib/template/types";
 
 import { canonicalJson } from "./canonical";
-import { computeAll } from "./computed";
+import { computeAll, type ComputeOptions } from "./computed";
 import { Refusals, safeLength, type Refusal } from "./css";
 import { attr, escapeHtml } from "./escape";
 import { calculateLayout } from "./layout";
 import type { ContentMeasurement } from "./measure";
 import { renderObject } from "./primitives";
-import { expandRepeats } from "./repeat";
+import { expandRepeats, type RepeatContext } from "./repeat";
 import { applyRowHeights, rowsWorthMeasuring } from "./rowHeights";
 import { sha256Hex } from "./sha256";
 import { stylesheet } from "./style";
@@ -29,6 +29,23 @@ export interface RenderOptions {
   computed?: readonly ComputedSpec[];
   /** Decimal places money is held in. Defaults to 2. */
   currencyScale?: number;
+  /** The written rounding rule every computation follows. */
+  rounding?: RoundingMode;
+  /** Decimal places a count operand is read at inside products. */
+  qtyScale?: number;
+  /**
+   * Specs evaluated per row of a repeat band (a band's line figure), separate
+   * from `computed`: the whole-document pass runs once over every row, the
+   * band pass runs once per row, and a caller that pre-applied `computed`
+   * still owes the rows their own figures.
+   */
+  bandSpecs?: readonly ComputedSpec[];
+  /**
+   * The template's identity digest, precomputed by the caller from the
+   * authored template. Supplied so a hash stays constant across values;
+   * without it the fingerprint covers the template as handed in.
+   */
+  templateHash?: string;
   /**
    * Whether an unfilled slot is painted at all.
    *
@@ -137,6 +154,32 @@ function record(v: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+function safeScaleOption(v: unknown, fallback: number): number {
+  const n = typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 6 ? v : Number.NaN;
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/**
+ * The template's identity fingerprint, over the template as authored: the same
+ * template yields the same digest whatever values a form later supplies, so a
+ * host can bind "the document I ship" to one digest and verify it at open.
+ */
+export function templateHashOf(
+  template: BillTemplate,
+  computed?: readonly ComputedSpec[],
+): string {
+  const hashComputations = computed ?? template.meta?.computed;
+  return sha256Hex(
+    canonicalJson({
+      ...template,
+      meta: {
+        name: template.meta?.name,
+        ...(Array.isArray(hashComputations) ? { computed: hashComputations } : {}),
+      },
+    }),
+  );
+}
+
 /**
  * The document's name, as a string, or a refusal and a substitute.
  *
@@ -205,12 +248,29 @@ export function renderHtml(
   // Repeating bands are expanded before anything is sorted or painted, so the
   // renderer itself stays unaware of them. `values` gains the computed results
   // first, because a band's trailing summary row reads them.
+  const scale = safeScaleOption(options.currencyScale, 2);
+  const computeOpts: ComputeOptions = {
+    ...(options.rounding !== undefined ? { rounding: options.rounding } : {}),
+    ...(options.qtyScale !== undefined ? { qtyScale: options.qtyScale } : {}),
+  };
   const enriched: Values = {
     ...values,
-    ...computeAll(options.computed ?? [], values, options.currencyScale ?? 2),
+    ...computeAll(options.computed ?? [], values, scale, computeOpts),
   };
 
-  const { objects: expanded0, warnings: repeatWarnings } = expandRepeats(objects, enriched, height);
+  const bandCtx: RepeatContext = {
+    specs: options.bandSpecs ?? options.computed ?? [],
+    scale,
+    rounding: options.rounding,
+    qtyScale: options.qtyScale,
+  };
+
+  const { objects: expanded0, warnings: repeatWarnings } = expandRepeats(
+    objects,
+    enriched,
+    height,
+    bandCtx,
+  );
 
   // Variable rows, immediately after the band has been expanded and before
   // anything is measured against or solved for.
@@ -306,15 +366,18 @@ export function renderHtml(
     .filter((s): s is string => typeof s === "string")
     .join("\n");
 
-  // The fingerprint covers the whole template with `meta` reduced to its `name`,
-  // so it answers the question a caller actually asks - has the layout changed?
+  // The fingerprint covers the whole template with save time removed, while
+  // retaining calculation rules because they change rendered output.
+  // It answers whether anything that affects rendered output has changed,
   // - and re-saving an unchanged trace keeps the same fingerprint.
   // `meta.modifiedAt` changes on every save, so including it would make the hash
   // meaningless as a way to tell one revision from another. The name is taken
   // raw rather than through `docName`, because a template whose `name` is a
   // number is a different template from one whose name is "42", and that
   // difference should show up in the fingerprint.
-  const hash = sha256Hex(canonicalJson({ ...template, meta: { name: meta?.name } }));
+  const hash =
+    options.templateHash ??
+    templateHashOf(template, Array.isArray(options.computed) ? options.computed : undefined);
   const title = escapeHtml(options.title ?? name);
 
   const html =

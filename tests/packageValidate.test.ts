@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import type { Package, PackageManifest } from "@/lib/package/format";
 import { PACKAGE_VERSION } from "@/lib/package/format";
 import { validatePackage } from "@/lib/package/validate";
+import { sha256HexBytes } from "@/lib/render/sha256";
 
-function manifest(over: Partial<PackageManifest> = {}): PackageManifest {
+function manifestFor(files: Map<string, Uint8Array>): PackageManifest {
+  const templateSha = sha256HexBytes(files.get("template.json") ?? new Uint8Array());
   return {
     packageVersion: PACKAGE_VERSION,
     templateVersion: 2,
@@ -15,8 +17,9 @@ function manifest(over: Partial<PackageManifest> = {}): PackageManifest {
     fonts: [],
     fields: [],
     computed: [],
-    checksums: {},
-    ...over,
+    engineVersion: 1,
+    templateSha256: templateSha,
+    checksums: { "template.json": templateSha },
   };
 }
 
@@ -28,7 +31,7 @@ function pkg(
     ["template.json", new Uint8Array([1, 2, 3])],
     ...Object.entries(files),
   ]);
-  return { manifest: manifest(over), files: map };
+  return { manifest: { ...manifestFor(map), ...over }, files: map };
 }
 
 const errors = (p: Package) =>
@@ -114,6 +117,19 @@ describe("validatePackage", () => {
       ],
     });
     expect(errors(p).some((i) => i.path === "fields[0].columns")).toBe(true);
+  });
+
+  it("rejects repeat row limits above the supported cap", () => {
+    const p = pkg({ fields: [{
+      key: "items",
+      label: "Items",
+      type: "repeating" as const,
+      source: "table" as const,
+      objectName: "Items",
+      columns: ["amount"],
+      maxItems: 201,
+    }] });
+    expect(errors(p).some((issue) => issue.path === "fields[0].maxItems")).toBe(true);
   });
 
   it("rejects a computed op outside the vocabulary", () => {

@@ -6,6 +6,8 @@
  * rendering engine can consume without Fabric being installed.
  */
 
+import type { ComputedSpec } from "@/lib/package/format";
+
 export const TEMPLATE_VERSION = 2 as const;
 
 export type ObjectType =
@@ -342,14 +344,34 @@ export interface PlaceholderSpec {
   label?: string;
   /** Input kind produced on `/render` and in the share kit. */
   type?: PlaceholderType;
+  /** Whether a customer must provide a value before generating the document. */
+  required?: boolean;
+  /** Initial form value. Stored as text so every input type shares one contract. */
+  defaultValue?: string;
   /** Max length of the form input (text only). */
   maxLength?: number;
+  /** Inclusive numeric limits for number and currency inputs. */
+  min?: number;
+  max?: number;
   /** Style of the rendered value when this key carries the whole text. */
   fontFamily?: string;
   fontSize?: number;
   fontWeight?: "normal" | "bold";
   fontStyle?: "normal" | "italic";
   color?: string;
+  /**
+   * How the value prints: a date output pattern (`DD`, `MM`, `YYYY` tokens)
+   * or thousands grouping for numeric output. Without one, the value prints
+   * exactly as the form supplied it.
+   */
+  display?: PlaceholderDisplay;
+}
+
+export interface PlaceholderDisplay {
+  /** Date output pattern, e.g. `DD/MM/YYYY`. */
+  date?: string;
+  /** Thousands grouping for numeric output. */
+  grouping?: "off" | "indian" | "western";
 }
 
 export interface TemplateMeta {
@@ -358,6 +380,8 @@ export interface TemplateMeta {
   modifiedAt: string;
   /** Per-key placeholder contracts. */
   placeholders?: PlaceholderSpec[];
+  /** Explicit safe calculations configured by the template author. */
+  computed?: ComputedSpec[];
 }
 
 /**

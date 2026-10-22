@@ -390,13 +390,13 @@ test.describe("Bill template tracing workflow", () => {
     const grab = async (
       item: string,
     ): Promise<{ name: string; read: () => Buffer }> => {
-      await page.getByRole("button", { name: /Export/ }).click();
+      await page.getByRole("button", { name: /Get a copy/ }).click();
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: 20_000 }),
         page.getByRole("button", { name: new RegExp(item) }).click(),
       ]).catch(async (e) => {
         const err = await page
-          .locator("span.border-red-200")
+          .locator("[data-export-error]")
           .first()
           .textContent()
           .catch(() => null);
@@ -410,7 +410,7 @@ test.describe("Bill template tracing workflow", () => {
     };
 
     // JSON template
-    const jsonFile = await grab("JSON Template");
+    const jsonFile = await grab("JSON");
     expect(jsonFile.name).toMatch(/\.json$/);
     // The exported JSON is the current schema version: what this build writes.
     const json = JSON.parse(jsonFile.read().toString("utf8")) as Template;
@@ -441,7 +441,7 @@ test.describe("Bill template tracing workflow", () => {
     expect(docx.length).toBeGreaterThan(1000);
 
     // PNG preview.
-    const png = (await grab("Preview PNG")).read();
+    const png = (await grab("PNG")).read();
     expect([...png.subarray(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
   });
 
@@ -452,8 +452,8 @@ test.describe("Bill template tracing workflow", () => {
     await draw(page, P, 120, 200, 480, 300);
 
     const download = page.waitForEvent("download");
-    await page.getByRole("button", { name: /Export/ }).click();
-    await page.getByRole("button", { name: /HTML Document/ }).click();
+    await page.getByRole("button", { name: /Get a copy/ }).click();
+    await page.getByRole("button", { name: /A web page/ }).click();
     const file = await download;
     expect(file.suggestedFilename()).toMatch(/\.html$/);
 
@@ -794,7 +794,9 @@ test.describe("Pane navigation", () => {
     expect(viaCtrl.defaultPrevented).toBe(true);
     expect(viaCtrl.zoom).toBeGreaterThan(zoomOut.zoom);
 
-    await page.getByRole("button", { name: "Fit" }).click();
+    // Exact match: the stage bar adds a "Fit to page" sibling that a loose
+    // name match would also hit.
+    await page.getByRole("button", { name: "Fit", exact: true }).click();
     await page.waitForTimeout(300);
     const refitted = await readMetrics(page);
     expect(refitted.zoom).toBeCloseTo(fitted.zoom, 2);
@@ -1053,7 +1055,7 @@ test.describe("Dialogs and table editing", () => {
     await size.type("25", { delay: 40 });
     expect(await size.inputValue()).toBe("25");
 
-    await page.getByRole("button", { name: "Done" }).click();
+    await page.getByRole("button", { name: "Done", exact: true }).click();
     await page.waitForTimeout(200);
     expect(await page.evaluate("(() => window.__btm.getSnapshot().gridSize)()")).toBe(25);
   });
@@ -1359,10 +1361,12 @@ test.describe("Field tool", () => {
     await page.mouse.click(at.x, at.y);
     await page.waitForTimeout(250);
 
-    await expect(page.getByText("Object", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "This object", exact: true }),
+    ).toBeVisible();
     // TextPanel's own controls.
     await expect(page.getByText("Font", { exact: true })).toBeVisible();
-    await expect(page.getByText("Custom family")).toBeVisible();
+    await expect(page.getByText("Custom font", { exact: true })).toBeVisible();
     // SinglePanel only renders that footer for a real selection.
     await expect(page.getByText(/^1 selected$/)).toBeVisible();
   });
@@ -1384,13 +1388,13 @@ test.describe("Field tool", () => {
     // panel — and every control on it — was out of reach. Scoped to the panel
     // section because "Field" alone also matches the tool rail button.
     const fieldPanel = page.locator("section").filter({
-      has: page.getByRole("heading", { name: "Field", exact: true }),
+      has: page.getByRole("heading", { name: "Data field", exact: true }),
     });
     await expect(fieldPanel).toBeVisible();
-    await expect(fieldPanel.getByLabel("Align")).toBeVisible();
+    await expect(fieldPanel.getByLabel("Alignment")).toBeVisible();
 
     // And the alignment actually lands on the template.
-    await fieldPanel.getByLabel("Align").selectOption("right");
+    await fieldPanel.getByLabel("Alignment").selectOption("right");
     await page.waitForTimeout(200);
     const field = await page.evaluate(
       () =>
@@ -1439,7 +1443,9 @@ test.describe("Field tool", () => {
     await page.mouse.click(t.x, t.y);
     await page.waitForTimeout(150);
 
-    // Lock the structure.
+    // Lock the structure. The control lives in the bill step's panel; the step
+    // path opens that panel, the guide never hides the control itself.
+    await page.getByRole("button", { name: /your bill/i }).click();
     await page.getByRole("button", { name: /lock structure/i }).click();
     await page.waitForTimeout(150);
 
@@ -1878,7 +1884,11 @@ test("deleting a group deletes the structure it holds", async ({ page }) => {
       has: page.getByRole("heading", { name: "Group", exact: true }),
     });
     await expect(groupPanel).toBeVisible();
-    await groupPanel.getByRole("button", { name: "Group", exact: true }).click();
+    // The section heading is itself a collapse toggle named "Group" now, so
+    // the action button is identified by its shortcut hint.
+    await groupPanel
+      .getByRole("button", { name: "Group", exact: true, description: "Ctrl+G" })
+      .click();
     await page.waitForTimeout(250);
     expect(await page.evaluate(() => window.__btm!.getGroups())).toHaveLength(1);
 
@@ -1939,11 +1949,8 @@ test.describe("Wrapping text", () => {
     await page.waitForTimeout(300);
 
     // The box comes up selected, so its panel is reachable.
-    // Located by text inside the properties aside: a role+name query
-    // resolves to zero for this button even though it is present and visible,
-    // while `hasText` finds it reliably.
     const panel = page.locator("aside").last();
-    await panel.locator("button", { hasText: "Wrap at this width" }).click();
+    await panel.getByLabel("Let the text wrap onto more lines").check();
     await page.waitForTimeout(300);
 
     // Narrow it so a long value has to wrap.
@@ -2005,13 +2012,10 @@ const t = (
     await page.mouse.click(at.x, at.y);
     await page.waitForTimeout(300);
 
-    // Located by text inside the properties aside: a role+name query
-    // resolves to zero for this button even though it is present and visible,
-    // while `hasText` finds it reliably.
     const panel = page.locator("aside").last();
-    await panel.locator("button", { hasText: "Wrap at this width" }).click();
+    await panel.getByLabel("Let the text wrap onto more lines").check();
     await page.waitForTimeout(300);
-    await panel.locator("button", { hasText: "click to unwrap" }).click();
+    await panel.getByLabel("Let the text wrap onto more lines").uncheck();
     await page.waitForTimeout(300);
 
     const text = await page.evaluate(
@@ -2078,10 +2082,12 @@ test.describe("Snapping guides", () => {
   }
 
   async function enableFullSpan(page: import("@playwright/test").Page) {
+    // Grid Settings lives in the bill step's panel; the step path opens it.
+    await page.getByRole("button", { name: /your bill/i }).click();
     await page.getByRole("button", { name: /Grid Settings/ }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByLabel("Full-span rules").check();
-    await page.getByRole("button", { name: "Done" }).click();
+    await page.getByRole("button", { name: "Done", exact: true }).click();
     await page.waitForTimeout(150);
   }
 
@@ -2273,7 +2279,7 @@ async function setNewPartWhitening(page: Page, on: boolean): Promise<void> {
 
 /** The selected part's own whitening, in the Bill Part panel. */
 function partWhitening(page: Page) {
-  return page.getByLabel("Whiten paper", { exact: true });
+  return page.getByLabel("Clean the paper to white", { exact: true });
 }
 
 /**
@@ -2432,7 +2438,7 @@ test.describe("Bill part cutouts", () => {
       part.y + part.height / 2,
     );
     await page.mouse.click(centre.x, centre.y);
-    await page.getByRole("button", { name: "Recapture from current position" }).click();
+    await page.getByRole("button", { name: "Take it again from the photo" }).click();
     await page.waitForTimeout(400);
 
     const after = await readBillPart(page);
@@ -2546,13 +2552,15 @@ test.describe("Bill part cutouts", () => {
     const before = await page.evaluate(() => window.__btm.getTemplate().objects.length);
 
     // Drop the reference: the embedded crop is now the only copy of the pixels,
-    // which is exactly the state the spec's no-op requirement is about.
+    // which is exactly the state the spec's no-op requirement is about. The
+    // control lives in the bill step's panel; the step path opens it.
+    await page.getByRole("button", { name: /your bill/i }).click();
     await page.getByRole("button", { name: "Remove Reference" }).click();
     await page.waitForTimeout(300);
     await selectAt(page, part.x + part.width / 2, part.y + part.height / 2);
 
     const button = page.getByRole("button", {
-      name: "Recapture from current position",
+      name: "Take it again from the photo",
     });
     await expect(button).toBeDisabled();
     // Click it anyway. `force` skips the actionability wait that treats
@@ -2641,13 +2649,13 @@ test.describe("Bill part cutouts", () => {
     const part = await capturePart(page, { x1: 30, y1: 270, x2: 420, y2: 410 });
 
     const grab = async (item: string): Promise<Buffer> => {
-      await page.getByRole("button", { name: /Export/ }).click();
+      await page.getByRole("button", { name: /Get a copy/ }).click();
       const [download] = await Promise.all([
         page.waitForEvent("download", { timeout: 20_000 }),
         page.getByRole("button", { name: new RegExp(item) }).click(),
       ]).catch(async (e) => {
         const err = await page
-          .locator("span.border-red-200")
+          .locator("[data-export-error]")
           .first()
           .textContent()
           .catch(() => null);
@@ -2678,7 +2686,7 @@ test.describe("Bill part cutouts", () => {
     expect(docx.includes(Buffer.from("word/media/"))).toBe(true);
 
     // PNG and PDF still render, with the part baked in.
-    const png = await grab("Preview PNG");
+    const png = await grab("PNG");
     expect(png.subarray(1, 4).toString("latin1")).toBe("PNG");
     expect(png.length).toBeGreaterThan(5000);
 
@@ -2754,12 +2762,14 @@ test.describe("Bill part cutouts", () => {
 
     // ...then the editor default is flipped to whiten. Pressing Recapture must
     // not quietly apply it: the button re-cuts at the part's own setting, so
-    // the button and the part's toggle cannot fight each other.
+    // the button and the part's toggle cannot fight each other. The control
+    // lives in the bill step's panel; the step path opens it.
+    await page.getByRole("button", { name: /your bill/i }).click();
     await setNewPartWhitening(page, true);
     await selectAt(page, part.x + part.width / 2, part.y + part.height / 2);
     await expect(partWhitening(page)).not.toBeChecked();
 
-    await page.getByRole("button", { name: "Recapture from current position" }).click();
+    await page.getByRole("button", { name: "Take it again from the photo" }).click();
     await page.waitForTimeout(400);
 
     const after = await readBillPart(page);
@@ -2777,12 +2787,14 @@ test.describe("Bill part cutouts", () => {
     await expect(partWhitening(page)).toBeChecked();
 
     // Both controls re-cut, and neither can do anything without a reference, so
-    // both are disabled rather than silently doing nothing when clicked.
+    // both are disabled rather than silently doing nothing when clicked. The
+    // control lives in the bill step's panel; the step path opens it.
+    await page.getByRole("button", { name: /your bill/i }).click();
     await page.getByRole("button", { name: "Remove Reference" }).click();
     await page.waitForTimeout(250);
     await expect(partWhitening(page)).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "Recapture from current position" }),
+      page.getByRole("button", { name: "Take it again from the photo" }),
     ).toBeDisabled();
   });
 });
@@ -3017,6 +3029,184 @@ test.describe("Stroke width", () => {
     expect(await savedStrokeWidth(page)).toBe(0);
     expect(await strokeInk(page)).toBe(0);
   });
+
+  test("a stretched object keeps its stroke width", async ({ page }) => {
+    await openEditorWithBill(page);
+    await page.getByLabel("Show reference").uncheck();
+    await page.waitForTimeout(200);
+    await atZoom(page, 1);
+
+    // A horizontal rule: scaling Y stretches the stroke's thickness and
+    // nothing else, because the line's length does not follow the scale.
+    await pickTool(page, "Line");
+    const P = await docToPage(page);
+    const a = await P(150, 400);
+    const b = await P(550, 400);
+    await page.mouse.move(a.x, a.y);
+    await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(250);
+
+    const before = await strokeInk(page);
+
+    // Stretch the line vertically, the way a side handle would.
+    await page.evaluate(() => {
+      const canvas = window.__btm.getCanvas() as unknown as {
+        getObjects: () => Array<
+          Record<string, unknown> & {
+            set: (v: Record<string, unknown>) => void;
+            setCoords: () => void;
+          }
+        >;
+        requestRenderAll: () => void;
+      };
+      const o = canvas.getObjects().find((x) => x.type === "line");
+      o?.set({ scaleY: 3 });
+      o?.setCoords();
+      canvas.requestRenderAll();
+    });
+    await page.waitForTimeout(250);
+    const after = await strokeInk(page);
+
+    // Fabric multiplies the painted stroke by the object's scale, so without
+    // strokeUniform this reads roughly 3x. The stroke must ignore the stretch:
+    // only the object grows, not its outline.
+    expect(after).toBeLessThan(before * 1.6);
+
+    // Only the painted width ignores the scale; the stored one is untouched.
+    const width = await page.evaluate(() => {
+      const o = window.__btm
+        .getTemplate()
+        .objects.find((x) => x.type === "line");
+      return (o as unknown as { strokeWidth?: number })?.strokeWidth;
+    });
+    expect(width).toBeGreaterThan(0);
+  });
+});
+
+test.describe("Mark data step", () => {
+  test.beforeEach(async ({ page }) => {
+    page.on("dialog", (d) => void d.accept());
+  });
+
+  test("a property edit never advances; Next step is the way forward", async ({
+    page,
+  }) => {
+    await openEditorWithBill(page);
+    const steps = page.getByRole("navigation", { name: "Steps" });
+    await steps.getByRole("button", { name: /Mark data/ }).click();
+
+    const P = await docToPage(page);
+    await pickTool(page, "Field");
+    await draw(page, P, 200, 200, 360, 250);
+
+    // Drawing the first data field completes the step, but the guide stays:
+    // configuring the field is the work of this step, so it must not walk away.
+    const mark = steps.getByRole("button", { name: /Mark data/ });
+    await expect(mark).toHaveAttribute("aria-current", "step");
+    await expect(mark).toContainText("done");
+
+    // Open the field's contract row and change its type: an edit, not progress.
+    await page
+      .locator("button[aria-expanded]")
+      .filter({ hasText: "field_1" })
+      .first()
+      .click();
+    await page
+      .locator('select:has(option[value="text"])')
+      .first()
+      .selectOption("text");
+    await page.waitForTimeout(300);
+    await expect(mark).toHaveAttribute("aria-current", "step");
+
+    // The explicit way forward is the Next step button.
+    await steps.getByRole("button", { name: /^Next/ }).click();
+    await expect(
+      steps.getByRole("button", { name: /Test/ }),
+    ).toHaveAttribute("aria-current", "step");
+  });
+});
+
+test.describe("Polygon tool", () => {
+  test.beforeEach(async ({ page }) => {
+    page.on("dialog", (d) => void d.accept());
+  });
+
+  async function markerCounts(page: Page): Promise<{
+    dots: number;
+    guides: number;
+  }> {
+    return page.evaluate(() => {
+      const objects = window.__btm.getCanvas()!.getObjects();
+      return {
+        dots: objects.filter((o) => o.type === "circle").length,
+        guides: objects.filter(
+          (o) =>
+            o.type === "line" &&
+            Array.isArray((o as { strokeDashArray?: number[] }).strokeDashArray),
+        ).length,
+      };
+    });
+  }
+
+  test("shows the points as they are placed and closes on Enter", async ({
+    page,
+  }) => {
+    await openEditorWithBill(page);
+    await pickTool(page, "Polygon");
+    const P = await docToPage(page);
+    const a = await P(200, 200);
+    const b = await P(500, 200);
+    const c = await P(350, 450);
+
+    await page.mouse.click(a.x, a.y);
+    await page.waitForTimeout(150);
+    // The first click must be visible on its own: a vertex dot, so a single
+    // click never reads as "nothing happened".
+    expect((await markerCounts(page)).dots).toBe(1);
+
+    await page.mouse.click(b.x, b.y);
+    await page.mouse.move(c.x, c.y, { steps: 3 });
+    await page.waitForTimeout(150);
+    // A rubber band follows the pointer to where the next point would land.
+    expect((await markerCounts(page)).guides).toBe(1);
+
+    await page.mouse.click(c.x, c.y);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(250);
+
+    // The finished polygon is real template content and the markers are gone.
+    const after = await page.evaluate(() => ({
+      polygons: window.__btm
+        .getTemplate()
+        .objects.filter((o) => o.type === "polygon").length,
+    }));
+    expect(after.polygons).toBe(1);
+    const markers = await markerCounts(page);
+    expect(markers.dots).toBe(0);
+    expect(markers.guides).toBe(0);
+  });
+
+  test("Escape cancels the whole gesture", async ({ page }) => {
+    await openEditorWithBill(page);
+    await pickTool(page, "Polygon");
+    const P = await docToPage(page);
+    const a = await P(300, 300);
+    const b = await P(500, 350);
+    await page.mouse.click(a.x, a.y);
+    await page.mouse.click(b.x, b.y);
+    await page.keyboard.press("Escape");
+    await page.waitForTimeout(200);
+
+    const polygons = await page.evaluate(
+      () =>
+        window.__btm.getTemplate().objects.filter((o) => o.type === "polygon")
+          .length,
+    );
+    expect(polygons).toBe(0);
+    expect((await markerCounts(page)).dots).toBe(0);
+  });
 });
 
 test.describe("Editing several objects at once", () => {
@@ -3087,9 +3277,9 @@ test.describe("Editing several objects at once", () => {
     await expect(
       page.getByRole("heading", { name: "2 objects", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Appearance" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Ink & outline" })).toBeVisible();
 
-    const field = page.getByLabel("Stroke width");
+    const field = page.getByLabel("Line thickness");
     await expect(field).toBeVisible();
     const before = await widthsByType(page);
     // `fill` sets the value in one input event, so this is a single edit.
@@ -3172,22 +3362,22 @@ test.describe("Editing several objects at once", () => {
     const dash = page.getByTitle("The selection does not agree on this");
     await expect(dash).toHaveCount(2);
     await expect(dash.first()).toBeVisible();
-    await expect(page.getByLabel("Stroke width")).toBeVisible();
+    await expect(page.getByLabel("Line thickness")).toBeVisible();
     // The width field is empty rather than showing one object's number.
-    await expect(page.getByLabel("Stroke width")).toHaveValue("");
+    await expect(page.getByLabel("Line thickness")).toHaveValue("");
 
     // Settle the disagreements. The panel's colour inputs are ordered Stroke then
     // Fill, and both stay live even while mixed, so picking one is what applies
     // it across the whole selection.
     await page.getByLabel("Colour").nth(0).fill("#0000ff");
     await page.getByLabel("Colour").nth(1).fill("#eeeeee");
-    await page.getByLabel("Stroke width").fill("2");
+    await page.getByLabel("Line thickness").fill("2");
     await page.waitForTimeout(400);
     await selectBoth(page);
 
     // No dashes left, and every control shows the now-shared value.
     await expect(page.getByTitle("The selection does not agree on this")).toHaveCount(0);
-    await expect(page.getByLabel("Stroke width")).toHaveValue("2");
+    await expect(page.getByLabel("Line thickness")).toHaveValue("2");
     const widths = await widthsByType(page);
     expect(widths.rect).toBe(2);
     expect(widths.line).toBe(2);

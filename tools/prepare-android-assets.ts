@@ -15,7 +15,7 @@
  * Run: npm run prepare:android-assets
  */
 
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -127,6 +127,40 @@ function main(): void {
   writeFileSync(join(ASSETS, "sample.btpkg"), bytes);
 
   copyFileSync(join(webRoot, "public", "billkit.js"), join(ASSETS, "billkit.js"));
+  if (existsSync(join(webRoot, "public", "sharekit.js"))) {
+    copyFileSync(join(webRoot, "public", "sharekit.js"), join(ASSETS, "sharekit.js"));
+  }
+
+  // The print engine needs the font files beside the runtime: measurement is
+  // computed from these bytes, so a host without them refuses to print rather
+  // than substitute device fonts.
+  const fontsSource = join(webRoot, "public", "fonts");
+  if (existsSync(fontsSource)) {
+    mkdirSync(join(ASSETS, "fonts"), { recursive: true });
+    for (const font of readdirSync(fontsSource).filter((f) => f.endsWith(".ttf"))) {
+      copyFileSync(join(fontsSource, font), join(ASSETS, "fonts", font));
+    }
+    copyFileSync(join(webRoot, "assets", "fonts", "fonts.json"), join(ASSETS, "fonts", "fonts.json"));
+  }
+
+  // The Phase 6 golden fixture joins the reader's unit-test resources, so the
+  // Android reader is verified against the same committed bytes the web tests
+  // and the admin server consume.
+  const readerResources = join(
+    prototypeRoot,
+    "Android",
+    "feature",
+    "renderer",
+    "data",
+    "src",
+    "test",
+    "resources",
+  );
+  mkdirSync(readerResources, { recursive: true });
+  copyFileSync(
+    join(webRoot, "tests", "fixtures", "golden", "golden-invoice.btpkg"),
+    join(readerResources, "golden-invoice.btpkg"),
+  );
 
   const manifest = pkg.manifest;
   const band = objects.find((o) => o.type === "table") as TableObject;

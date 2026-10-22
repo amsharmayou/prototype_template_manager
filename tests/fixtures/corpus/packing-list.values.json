@@ -1,0 +1,7 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "items": "[{\"qty\":\"12\",\"description\":\"Carton A\",\"rate\":\"\"},{\"qty\":\"9\",\"description\":\"Carton B\",\"rate\":\"\"}]"
+}

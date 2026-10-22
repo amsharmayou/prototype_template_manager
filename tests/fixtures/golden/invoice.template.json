@@ -1,0 +1,268 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 794,
+    "height": 1123
+  },
+  "meta": {
+    "name": "GOLDEN INVOICE",
+    "modifiedAt": "2026-10-19T00:00:00.000Z",
+    "placeholders": [
+      {
+        "key": "invoice_no",
+        "type": "text"
+      },
+      {
+        "key": "invoice_date",
+        "type": "date"
+      },
+      {
+        "key": "customer_name",
+        "type": "text"
+      },
+      {
+        "key": "qty",
+        "type": "number"
+      },
+      {
+        "key": "amount",
+        "type": "currency"
+      }
+    ]
+  },
+  "objects": [
+    {
+      "type": "text",
+      "id": "title",
+      "name": "Title",
+      "role": null,
+      "x": 40,
+      "y": 40,
+      "width": 300,
+      "height": 32,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 0,
+      "parentId": null,
+      "layoutParentId": null,
+      "stroke": "transparent",
+      "strokeWidth": 0,
+      "fill": "transparent",
+      "text": "INVOICE",
+      "fontFamily": "Helvetica",
+      "fontSize": 20,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.2,
+      "charSpacing": 0,
+      "roleKind": "static",
+      "textVerticalAlign": "top"
+    },
+    {
+      "type": "text",
+      "id": "ref",
+      "name": "Invoice refs",
+      "role": null,
+      "x": 40,
+      "y": 80,
+      "width": 400,
+      "height": 24,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "layoutParentId": null,
+      "stroke": "transparent",
+      "strokeWidth": 0,
+      "fill": "transparent",
+      "text": "No {{invoice_no}} - issued {{invoice_date}}",
+      "fontFamily": "Helvetica",
+      "fontSize": 11,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.2,
+      "charSpacing": 0,
+      "roleKind": "variable",
+      "textVerticalAlign": "top"
+    },
+    {
+      "type": "text",
+      "id": "customer",
+      "name": "Customer name",
+      "role": null,
+      "x": 40,
+      "y": 110,
+      "width": 400,
+      "height": 24,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 2,
+      "parentId": null,
+      "layoutParentId": null,
+      "stroke": "transparent",
+      "strokeWidth": 0,
+      "fill": "transparent",
+      "text": "{{customer_name}}",
+      "fontFamily": "Helvetica",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.2,
+      "charSpacing": 0,
+      "roleKind": "variable",
+      "textVerticalAlign": "top"
+    },
+    {
+      "type": "table",
+      "id": "line-items",
+      "name": "Line items",
+      "role": null,
+      "x": 40,
+      "y": 160,
+      "width": 520,
+      "height": 120,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 3,
+      "parentId": null,
+      "layoutParentId": null,
+      "stroke": "transparent",
+      "strokeWidth": 0,
+      "fill": "transparent",
+      "rows": 3,
+      "columns": 3,
+      "colWidths": [
+        90,
+        300,
+        130
+      ],
+      "rowHeights": [
+        36,
+        36,
+        48
+      ],
+      "cells": [
+        {
+          "text": "Qty",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Description",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "Amount",
+          "textAlign": "right",
+          "fontSize": 10,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "{{qty}}",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{description}}",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{amount}}",
+          "textAlign": "right",
+          "fontSize": 10,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "Total",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "bold"
+        },
+        {
+          "text": "",
+          "textAlign": "left",
+          "fontSize": 10,
+          "fontWeight": "normal"
+        },
+        {
+          "text": "{{subtotal}}",
+          "textAlign": "right",
+          "fontSize": 10,
+          "fontWeight": "bold"
+        }
+      ],
+      "borderColor": "#d4d4d4",
+      "borderWidth": 1,
+      "cellFill": "#ffffff",
+      "headerRow": true,
+      "headerFill": "#f5f5f5",
+      "headerTextColor": "#171717",
+      "cellTextColor": "#171717",
+      "padding": 4,
+      "fontFamily": "Helvetica",
+      "expansion": {
+        "x": {
+          "mode": "fixed"
+        },
+        "y": {
+          "mode": "bounded",
+          "maxGrowth": 64
+        }
+      },
+      "repeat": {
+        "startRow": 1,
+        "endRow": 1,
+        "key": "items",
+        "repeatHeader": true,
+        "maxItems": 25
+      }
+    },
+    {
+      "type": "text",
+      "id": "total",
+      "name": "Total line",
+      "role": null,
+      "x": 40,
+      "y": 300,
+      "width": 400,
+      "height": 24,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 4,
+      "parentId": null,
+      "layoutParentId": null,
+      "stroke": "transparent",
+      "strokeWidth": 0,
+      "fill": "transparent",
+      "text": "Total: {{subtotal}} GBP",
+      "fontFamily": "Helvetica",
+      "fontSize": 12,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.2,
+      "charSpacing": 0,
+      "roleKind": "variable",
+      "textVerticalAlign": "top"
+    }
+  ]
+}

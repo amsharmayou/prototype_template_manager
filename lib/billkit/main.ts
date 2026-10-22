@@ -1,3 +1,4 @@
+import { openBundle } from "@/lib/package/open";
 import { deriveFormBridge, measureBridge, renderBridge } from "./bridge";
 import { measureDom } from "./measure-dom";
 
@@ -23,6 +24,12 @@ declare global {
       /** Runs that plan against this runtime's font engine. */
       measure: typeof measureDom;
       render: typeof renderBridge;
+      /**
+       * Unzip, verify and resolve one `.btpkg`: the only supported way for a
+       * host to admit a bundle, so checksums, engine version and template
+       * identity cannot be skipped.
+       */
+      openBundle: typeof openBundle;
     };
   }
 }
@@ -36,5 +43,6 @@ if (typeof window !== "undefined") {
     measurePlan: measureBridge,
     measure: measureDom,
     render: renderBridge,
+    openBundle,
   };
 }

@@ -1,0 +1,10 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Acme Trading Co.",
+  "customer_address": "23 Ring Road, Mumbai",
+  "employee_name": "P. Deshpande",
+  "employee_id": "EMP-014",
+  "pay_month": "September 2026",
+  "items": "[{\"qty\":\"22\",\"description\":\"Basic\",\"rate\":\"1200\"},{\"qty\":\"6\",\"description\":\"Overtime hours\",\"rate\":\"210.75\"}]"
+}

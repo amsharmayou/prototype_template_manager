@@ -1,0 +1,7 @@
+{
+  "invoice_number": "R-5567",
+  "invoice_date": "2026-10-17",
+  "customer_name": "Walk-in",
+  "cash_tendered": "700",
+  "items": "[{\"qty\":\"2\",\"description\":\"Milk 1L\",\"rate\":\"58.50\"},{\"qty\":\"0.5\",\"description\":\"Rice kg\",\"rate\":\"62\"},{\"qty\":\"1\",\"description\":\"Matchbox\",\"rate\":\"2\"}]"
+}

@@ -13,9 +13,10 @@
  */
 
 import { DEFAULT_REPEAT_MAX_ITEMS } from "@/lib/template/types";
-import type { TableCell, TableObject, TemplateObject } from "@/lib/template/types";
+import type { ComputedSpec, RoundingMode } from "@/lib/package/format";
+import type { TableCell, TableObject, TableRepeat, TemplateObject } from "@/lib/template/types";
 
-import { itemsOf } from "./computed";
+import { bandRowValues, itemsOf } from "./computed";
 import type { Values } from "./values";
 
 /** Same grammar as `TOKEN_SOURCE` in `lib/render/values`. A fresh regex per use. */
@@ -23,13 +24,37 @@ const TOKEN_SOURCE = "\\{\\{\\s*([a-zA-Z0-9_.-]+)\\s*\\}\\}";
 
 const tokenRegex = (): RegExp => new RegExp(TOKEN_SOURCE, "g");
 
+/**
+ * What one repeat band's rows are computed with.
+ *
+ * `specs` are the per-row rules (a line figure from count and rate); `scale`
+ * is the currency scale they resolve to. When `specs` is empty a band costs
+ * nothing extra and behaves exactly as it did before per-row computation.
+ */
+export interface RepeatContext {
+  specs: readonly ComputedSpec[];
+  scale: number;
+  rounding?: RoundingMode;
+  qtyScale?: number;
+}
+
 export function resolveScoped(
   text: string,
   item: Record<string, unknown>,
   values: Values,
 ): string {
   return text.replace(tokenRegex(), (token, key: string) => {
-    const local = item[key];
+    // The dotted form resolves as a whole key first and as a column path
+    // second - the same order `computeAll` applies to an arg - so a band cell
+    // written `{{band.column}}` binds the row's column and a band whose key
+    // field is itself dotted still reads whole.
+    const dot = key.indexOf(".");
+    const local =
+      (typeof item[key] === "string" || typeof item[key] === "number")
+        ? item[key]
+        : dot > 0
+        ? item[key.slice(dot + 1)]
+        : undefined;
     if (typeof local === "string") return local;
     if (typeof local === "number" && Number.isFinite(local)) return String(local);
     const global = values[key];
@@ -104,6 +129,38 @@ function bandOf(o: TableObject): { band: Band; why: string | null } | null {
 }
 
 /**
+ * Warnings about a band's shape, which are cheap to state and expensive to
+ * discover otherwise.
+ *
+ * Both cases are configuration the author set and the renderer cannot honour.
+ * They are reported rather than refused: a band that draws is still a band that
+ * draws, and refusing would take a bill off the screen over a heading.
+ */
+function bandWarnings(o: TableObject, band: Band): string[] {
+  const found: string[] = [];
+
+  // `repeatHeader` means "draw the header again when the table splits across
+  // pages". A single-page document has no page to split onto, so the flag does
+  // nothing - and saying nothing leaves an author believing the column headings
+  // will follow a long line-item table onto page two.
+  if ((o.repeat as TableRepeat | undefined)?.repeatHeader === true) {
+    found.push(
+      `table "${o.name}" has repeatHeader on, which asks for the header row to be drawn again when the table splits across pages; a document is a single page here, so the heading is drawn once`,
+    );
+  }
+
+  // A band that starts on the header row clones that row once per item, so the
+  // column headings are repeated down the table instead of sitting above it.
+  if (o.headerRow === true && band.startRow === 0) {
+    found.push(
+      `table "${o.name}" starts its repeating band on the header row, so the header is drawn once per item; start the band below it to keep one heading`,
+    );
+  }
+
+  return found;
+}
+
+/**
  * How many entries `raw` holds when it is a JSON array, or null when it is not one at
  * all -- a parse failure, or a JSON scalar or object.
  *
@@ -127,16 +184,21 @@ function expandTable(
   o: TableObject,
   values: Values,
   pageHeight: number,
+  ctx: RepeatContext | undefined,
 ): { table: TemplateObject; warnings: string[] } {
   const found = bandOf(o);
   if (!found) return { table: o, warnings: [] };
   const { band, why } = found;
+  const bandCtx = ctx && ctx.specs.length > 0 ? ctx : undefined;
 
   const warnings: string[] = [];
   if (why) {
     warnings.push(`table "${o.name}" has a repeat band that was ignored: ${why}`);
     return { table: o, warnings };
   }
+  // Configuration the author set that this renderer cannot honour, said out loud
+  // rather than left to look like it worked.
+  warnings.push(...bandWarnings(o, band));
 
   const columns = typeof o.columns === "number" && o.columns > 0 ? o.columns : 1;
   const raw = values[band.key];
@@ -191,10 +253,20 @@ function expandTable(
     newHeights.push(heights[r] ?? 0);
   }
   for (const item of used) {
+    // The band's own computed columns are resolved before the row is bound:
+    // a line figure that repeats `spec.key` tokens gets the engine's product
+    // of this row's count and rate, and the summary row's sum then reads the
+    // same figures the rows print.
+    const row = bandCtx
+      ? { ...item, ...bandRowValues(bandCtx.specs, band.key, item, values, bandCtx.scale, {
+          rounding: bandCtx.rounding,
+          qtyScale: bandCtx.qtyScale,
+        }) }
+      : item;
     for (let r = band.startRow; r <= band.endRow; r += 1) {
       for (let c = 0; c < columns; c += 1) {
         const src = at(r, c);
-        newCells.push({ ...src, text: resolveScoped(src.text ?? "", item, values) });
+        newCells.push({ ...src, text: resolveScoped(src.text ?? "", row, values) });
       }
       newHeights.push(heights[r] ?? 0);
     }
@@ -236,11 +308,12 @@ export function expandRepeats(
   objects: readonly TemplateObject[],
   values: Values,
   pageHeight: number,
+  ctx?: RepeatContext,
 ): { objects: TemplateObject[]; warnings: string[] } {
   const warnings: string[] = [];
   const out = objects.map((o) => {
     if (o.type !== "table") return o;
-    const { table, warnings: w } = expandTable(o, values, pageHeight);
+    const { table, warnings: w } = expandTable(o, values, pageHeight, ctx);
     warnings.push(...w);
     return table;
   });

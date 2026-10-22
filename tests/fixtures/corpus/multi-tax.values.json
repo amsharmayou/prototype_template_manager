@@ -1,0 +1,9 @@
+{
+  "invoice_number": "INV-2026-1042",
+  "invoice_date": "2026-10-03",
+  "customer_name": "Sharma & Sons",
+  "customer_address": "14 Mall Road, Pune 411001",
+  "cgst_rate": "9",
+  "sgst_rate": "9",
+  "items": "[{\"qty\":\"4\",\"description\":\"Cotton fabric, per metre\",\"rate\":\"310.40\"}]"
+}

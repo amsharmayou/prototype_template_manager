@@ -95,9 +95,16 @@ describe("golden properties that must hold for every case", () => {
       expect(html).toMatch(/data-template-hash="[0-9a-f]{64}"/);
     });
 
-    it(`${c.name}.html declares @page at the document's own pixels`, () => {
+    it(`${c.name}.html declares @page at the document's own size`, () => {
       const { html } = renderHtml(build(c), c.name === "every-primitive" ? { total: "3,510.00" } : {});
-      expect(html).toContain(`@page { size: ${c.doc.w}px ${c.doc.h}px; margin: 0; }`);
+      // A4 is declared by paper name: 794x1123px is a fraction wider than the
+      // real sheet, and the reconciliation is the printer's, which is exactly
+      // the drift a print pipeline cannot afford. Every other size keeps px.
+      const isA4 = c.doc.w === 794 && c.doc.h === 1123;
+      const expectedRule = isA4
+        ? "@page { size: A4; margin: 0; }"
+        : `@page { size: ${c.doc.w}px ${c.doc.h}px; margin: 0; }`;
+      expect(html).toContain(expectedRule);
     });
   }
 });

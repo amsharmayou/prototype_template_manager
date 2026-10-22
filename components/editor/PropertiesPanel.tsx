@@ -1,16 +1,20 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
+
+import { BUNDLED_FONTS } from "@/lib/fonts/bundled";
 
 import type { FabricObject } from "fabric";
 
 import {
   Button,
   Checkbox,
+  Chip,
   ColorInput,
   Field,
+  IndexNav,
   NumberInput,
-  Panel,
+  Section,
   Select,
   TextInput,
 } from "@/components/ui/Controls";
@@ -29,26 +33,70 @@ import type {
   TemplateObject,
 } from "@/lib/template/types";
 
-const FONTS = [
-  { value: "Arial", label: "Arial" },
-  { value: "Helvetica", label: "Helvetica" },
-  { value: "Segoe UI", label: "Segoe UI" },
-  { value: "Tahoma", label: "Tahoma" },
-  { value: "Trebuchet MS", label: "Trebuchet MS" },
-  { value: "Verdana", label: "Verdana" },
-  { value: "Calibri", label: "Calibri" },
-  { value: "Cambria", label: "Cambria" },
-  { value: "Georgia", label: "Georgia" },
-  { value: "Palatino Linotype", label: "Palatino Linotype" },
-  { value: "Book Antiqua", label: "Book Antiqua" },
-  { value: "Garamond", label: "Garamond" },
-  { value: "Century Gothic", label: "Century Gothic" },
-  { value: "Impact", label: "Impact" },
-  { value: "Comic Sans MS", label: "Comic Sans MS" },
-  { value: "Times New Roman", label: "Times New Roman" },
-  { value: "Courier New", label: "Courier New" },
-  { value: "Lucida Console", label: "Lucida Console" },
-];
+/**
+ * Only the bundled set: a family outside it has no file in the pipeline, and
+ * the print engine refuses a document it cannot paint rather than swap in a
+ * lookalike. Metric-compatible aliases stay because older templates carry
+ * those names and resolve to the same files.
+ */
+const FONTS = BUNDLED_FONTS.map((f) => ({ value: f.value, label: f.label }));
+
+/** `FONTS` plus a per-option style, so the native dropdown previews each face. */
+const FONT_OPTIONS = FONTS.map((f) => ({
+  ...f,
+  style: { fontFamily: f.value },
+}));
+
+const ROLE_CHIPS = ["header", "title", "item", "total", "footer"] as const;
+
+/**
+ * Bold and italic as two pressable buttons.
+ *
+ * The old weight/style selects asked the author to think of CSS values; these
+ * say what they do and show their state at a glance. The undo labels stay
+ * "Weight" / "Font style" so existing undo entries keep their names.
+ */
+function BoldItalicButtons({
+  bold,
+  italic,
+  onToggleBold,
+  onToggleItalic,
+}: {
+  bold: boolean;
+  italic: boolean;
+  onToggleBold: () => void;
+  onToggleItalic: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className="text-[12px] font-medium text-ink-soft">
+        Bold &amp; italic
+      </span>
+      <div className="flex gap-1">
+        <Button
+          className="w-10 font-bold"
+          label="Bold"
+          title="Bold"
+          pressed={bold}
+          variant={bold ? "primary" : "default"}
+          onClick={onToggleBold}
+        >
+          B
+        </Button>
+        <Button
+          className="w-10 italic"
+          label="Italic"
+          title="Italic"
+          pressed={italic}
+          variant={italic ? "primary" : "default"}
+          onClick={onToggleItalic}
+        >
+          I
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 /** A small free-text family input committing only on blur/Enter. */
 function CustomFontInput({
@@ -95,12 +143,12 @@ export default function PropertiesPanel({
   }
   if (selected.length === 0) {
     return (
-      <Panel title="Properties">
-        <p className="text-[11px] leading-relaxed text-neutral-500">
-          Nothing selected. Pick an object on the canvas to edit its geometry,
-          styling and semantic role.
+      <Section id="properties" title="Properties">
+        <p className="text-[12px] leading-relaxed text-ink-soft">
+          Nothing selected yet. Click an object on the paper to change how it
+          looks.
         </p>
-      </Panel>
+      </Section>
     );
   }
   if (selected.length > 1) {
@@ -121,6 +169,15 @@ export default function PropertiesPanel({
   );
 }
 
+const ALIGN_BUTTONS = [
+  ["left", "Align left", "â‡¤ Left"],
+  ["center", "Align centre", "â‡” Centre"],
+  ["right", "Align right", "â‡¥ Right"],
+  ["top", "Align top", "â¤’ Top"],
+  ["middle", "Align middle", "â‡• Middle"],
+  ["bottom", "Align bottom", "â¤“ Bottom"],
+] as const;
+
 function SinglePanel({
   controller,
   state,
@@ -140,9 +197,42 @@ function SinglePanel({
   const preview = (fn: (obj: FabricObject) => void) =>
     controller.previewSelection(fn);
 
+  const guides = state.layout?.guides ?? [];
+  const doc = state.layout?.document;
+  const hasGrowth =
+    (doc?.growthX ?? "fixed") !== "fixed" ||
+    (doc?.growthY ?? "fixed") !== "fixed" ||
+    doc?.maxWidth !== undefined ||
+    doc?.maxHeight !== undefined;
+  const sections = [
+    { id: "object", label: "This object" },
+    { id: "size", label: "Size & position" },
+    { id: "ink", label: "Ink & outline" },
+    ...(o.type === "text" ? [{ id: "text", label: "Text" }] : []),
+    ...(o.type === "table" ? [{ id: "table", label: "Table" }] : []),
+    ...(o.type === "image-placeholder"
+      ? [{ id: "slot", label: "Picture slot" }]
+      : []),
+    ...(o.type === "field" ? [{ id: "data-field", label: "Data field" }] : []),
+    ...(o.type === "bill-part" ? [{ id: "cut-out", label: "Cut-out picture" }] : []),
+    { id: "lineup", label: "Line up" },
+    { id: "growth", label: "When data is longer" },
+    ...(guides.length > 0
+      ? [{ id: "follows", label: "What moves with this" }]
+      : []),
+    { id: "frame", label: "Inside its frame" },
+    ...(state.layout !== undefined || hasGrowth
+      ? [{ id: "page", label: "The page" }]
+      : []),
+    ...(guides.length > 0
+      ? [{ id: "guides", label: `Guide lines (${guides.length})` }]
+      : []),
+  ];
+
   return (
     <>
-      <Panel title="Object">
+      <IndexNav sections={sections} />
+      <Section id="object" title="This object">
         <Field label="Name">
           <TextInput
             value={name}
@@ -154,10 +244,27 @@ function SinglePanel({
             }}
           />
         </Field>
-        <Field label="Role" hint="Semantic tag, e.g. header, title, items, footer">
+        <div className="space-y-1">
+          <span className="block text-[12px] font-medium text-ink-soft">
+            What this is
+          </span>
+          <div className="flex flex-wrap gap-1">
+            {ROLE_CHIPS.map((r) => (
+              <Chip
+                key={r}
+                label={r[0]!.toUpperCase() + r.slice(1)}
+                selected={role.trim().toLowerCase() === r}
+                onClick={() => {
+                  const next = role.trim().toLowerCase() === r ? "" : r;
+                  setRole(next);
+                  apply((obj) => obj.set({ role: next || null } as never), "Set role");
+                }}
+              />
+            ))}
+          </div>
           <TextInput
             value={role}
-            placeholder="header"
+            placeholder="Or type your own, e.g. items"
             onChange={(e) => setRole(e.target.value)}
             onBlur={() => {
               if (role !== (o.role ?? "")) {
@@ -165,7 +272,25 @@ function SinglePanel({
               }
             }}
           />
-        </Field>
+          <span className="block text-[12px] text-ink-faint">
+            Used when a value fills this object in.
+          </span>
+        </div>
+        <Checkbox
+          label="Locked"
+          checked={o.locked}
+          onChange={(v) => apply((obj) => {
+            obj.set({ locked: v, selectable: !v, evented: !v } as never);
+          }, "Lock")}
+        />
+        <Checkbox
+          label="Visible"
+          checked={o.visible}
+          onChange={(v) => apply((obj) => obj.set({ visible: v } as never), "Visibility")}
+        />
+      </Section>
+
+      <Section id="size" title="Size & position">
         <div className="grid grid-cols-2 gap-2">
           <Field label="X">
             <NumberInput
@@ -236,29 +361,17 @@ function SinglePanel({
             </span>
           </div>
         </Field>
-        <Checkbox
-          label="Locked"
-          checked={o.locked}
-          onChange={(v) => apply((obj) => {
-            obj.set({ locked: v, selectable: !v, evented: !v } as never);
-          }, "Lock")}
-        />
-        <Checkbox
-          label="Visible"
-          checked={o.visible}
-          onChange={(v) => apply((obj) => obj.set({ visible: v } as never), "Visibility")}
-        />
-      </Panel>
+      </Section>
 
-      <Panel title="Appearance">
+      <Section id="ink" title="Ink & outline">
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Stroke">
+          <Field label="Line colour">
             <ColorInput
               value={o.stroke}
               onChange={(v) => apply((obj) => obj.set({ stroke: v } as never), "Stroke")}
             />
           </Field>
-          <Field label="Stroke width">
+          <Field label="Line thickness">
             <NumberInput
               value={o.strokeWidth}
               step={0.5}
@@ -267,76 +380,57 @@ function SinglePanel({
             />
           </Field>
         </div>
-        <Field label="Fill">
+        <Field label="Fill colour">
           <ColorInput
             value={o.fill}
             onChange={(v) => apply((obj) => obj.set({ fill: v } as never), "Fill")}
           />
         </Field>
-      </Panel>
+      </Section>
 
       {o.type === "text" ? <TextPanel controller={controller} o={o} /> : null}
       {o.type === "table" ? <TablePanel controller={controller} state={state} o={o} /> : null}
       {o.type === "image-placeholder" ? <PlaceholderPanel controller={controller} o={o} /> : null}
       {o.type === "field" ? <FieldPanel controller={controller} o={o} /> : null}
       {o.type === "bill-part" ? (
-        <Panel title="Bill Part">
-          <p className="text-[10px] text-neutral-400">
-            Recapture uses the object&rsquo;s current canvas position to replace its image.
-          </p>
+        <Section id="cut-out" title="Cut-out picture">
           <Checkbox
-            label="Whiten paper"
+            label="Clean the paper to white"
             checked={o.normalized === true}
             disabled={!state.hasReference}
             onChange={(v) => controller.recaptureBillPart(o.id, v)}
           />
-          <p className="text-[10px] text-neutral-400">
-            Turning this re-cuts the part from where it sits, with or without the
-            paper whitened. Recapture keeps whatever is set here.
+          <p className="text-[12px] leading-relaxed text-ink-faint">
+            The check re-cuts the picture from the paper with the paper cleaned
+            to white. Taking it again always uses where the cut-out sits now and
+            keeps this setting.
           </p>
           <Button
             onClick={() => controller.recaptureBillPart(o.id)}
             disabled={!state.hasReference}
           >
-            Recapture from current position
+            Take it again from the photo
           </Button>
-        </Panel>
+        </Section>
       ) : null}
 
-      <Panel title="Align">
+      <Section id="lineup" title="Line up">
         <div className="grid grid-cols-3 gap-1">
-          {(
-            [
-              ["left", "Align left"],
-              ["center", "Align centre"],
-              ["right", "Align right"],
-            ] as const
-          ).map(([k, t]) => (
+          {ALIGN_BUTTONS.map(([k, t, word]) => (
             <Button key={k} title={t} onClick={() => controller.align(k)}>
-              {k === "left" ? "⇤" : k === "center" ? "⇔" : "⇥"}
-            </Button>
-          ))}
-          {(
-            [
-              ["top", "Align top"],
-              ["middle", "Align middle"],
-              ["bottom", "Align bottom"],
-            ] as const
-          ).map(([k, t]) => (
-            <Button key={k} title={t} onClick={() => controller.align(k)}>
-              {k === "top" ? "⤒" : k === "middle" ? "⇕" : "⤓"}
+              {word}
             </Button>
           ))}
         </div>
         <div className="grid grid-cols-2 gap-1">
           <Button onClick={() => controller.distribute("horizontal")}>
-            Distribute H
+            Space evenly (H)
           </Button>
           <Button onClick={() => controller.distribute("vertical")}>
-            Distribute V
+            Space evenly (V)
           </Button>
         </div>
-      </Panel>
+      </Section>
 
       <LayoutPanels
         controller={controller}
@@ -377,10 +471,10 @@ function TextPanel({
     controller.applyToSelection(fn, label);
 
   return (
-    <Panel title="Text">
+    <Section id="text" title="Text">
       <Field label="Text" hint="Wrap a value in {{ }} to make it a variable">
         <textarea
-          className="w-full rounded border border-neutral-300 bg-white px-2 py-1 font-mono text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+          className="w-full rounded border border-rule bg-paper px-2 py-1 font-mono text-[12px] focus:border-ink focus:outline-none"
           rows={3}
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -394,7 +488,7 @@ function TextPanel({
           }}
         />
       </Field>
-      <Field label="Insert variable">
+      <Field label="Insert a variable">
         <div className="flex flex-wrap gap-1">
           {SUGGESTED_VARIABLES.slice(0, 12).map((v) => (
             <button
@@ -405,7 +499,7 @@ function TextPanel({
                 setText(next);
                 apply((obj) => obj.set({ text: next } as never), "Insert variable");
               }}
-              className="rounded border border-neutral-200 bg-neutral-50 px-1.5 py-0.5 font-mono text-[10px] text-neutral-600 hover:border-blue-400 hover:text-blue-700"
+              className="rounded border border-rule bg-desk px-1.5 py-0.5 font-mono text-[12px] text-ink-soft transition-colors hover:border-ink hover:text-ink"
             >
               {v}
             </button>
@@ -417,7 +511,7 @@ function TextPanel({
           <Select
             value={o.fontFamily}
             onChange={(v) => apply((obj) => obj.set({ fontFamily: v } as never), "Font")}
-            options={FONTS}
+            options={FONT_OPTIONS}
           />
         </Field>
         <Field label="Size">
@@ -427,68 +521,67 @@ function TextPanel({
             onChange={(v) => apply((obj) => obj.set({ fontSize: v } as never), "Font size")}
           />
         </Field>
-        <Field label="Weight">
-          <Select
-            value={o.fontWeight}
-            onChange={(v) => apply((obj) => obj.set({ fontWeight: v } as never), "Weight")}
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "bold", label: "Bold" },
-            ]}
-          />
-        </Field>
-        <Field label="Style">
-          <Select
-            value={o.fontStyle}
-            onChange={(v) => apply((obj) => obj.set({ fontStyle: v } as never), "Font style")}
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "italic", label: "Italic" },
-            ]}
-          />
-        </Field>
-        <Field label="Align">
-          <Select
-            value={o.textAlign}
-            onChange={(v) => apply((obj) => obj.set({ textAlign: v } as never), "Align")}
-            options={[
-              { value: "left", label: "Left" },
-              { value: "center", label: "Centre" },
-              { value: "right", label: "Right" },
-            ]}
-          />
-        </Field>
-<Field label="Custom family" hint="Any installed face, e.g. My Custom Font">
+      </div>
+      <BoldItalicButtons
+        bold={o.fontWeight === "bold"}
+        italic={o.fontStyle === "italic"}
+        onToggleBold={() =>
+          apply(
+            (obj) =>
+              obj.set({
+                fontWeight: o.fontWeight === "bold" ? "normal" : "bold",
+              } as never),
+            "Weight",
+          )
+        }
+        onToggleItalic={() =>
+          apply(
+            (obj) =>
+              obj.set({
+                fontStyle: o.fontStyle === "italic" ? "normal" : "italic",
+              } as never),
+            "Font style",
+          )
+        }
+      />
+      <Field label="Alignment">
+        <Select
+          value={o.textAlign}
+          onChange={(v) => apply((obj) => obj.set({ textAlign: v } as never), "Align")}
+          options={[
+            { value: "left", label: "Left" },
+            { value: "center", label: "Centre" },
+            { value: "right", label: "Right" },
+          ]}
+        />
+      </Field>
+      <Field label="Custom font" hint="Any installed face, e.g. My Custom Font">
         <CustomFontInput
           value={o.fontFamily}
           onCommit={(v) => apply((obj) => obj.set({ fontFamily: v } as never), "Font family")}
         />
       </Field>
-      <Field
-        label="Wrap"
-        hint="Fixed width: the text wraps and the box grows downward. Off means one auto-width line."
-      >
-        <Button
-          className="w-full"
-          variant={isWrapped ? "primary" : "default"}
-          onClick={() => controller.setTextWrap(!isWrapped)}
-        >
-          {isWrapped ? "Wrapped — click to unwrap" : "Wrap at this width"}
-        </Button>
-      </Field>
-      </div>
-      <div className="rounded bg-neutral-50 px-2 py-1.5 text-[10px] text-neutral-500">
-        <div>
-          Kind: <span className="font-medium">{o.roleKind}</span>
-        </div>
-        <div className="mt-0.5">
-          Variable:{" "}
-          <span className="font-mono">
-            {o.roleKind === "variable" ? (o.role ?? "(mixed)") : "—"}
-          </span>
-        </div>
-      </div>
-    </Panel>
+      <Checkbox
+        label="Let the text wrap onto more lines"
+        checked={isWrapped}
+        onChange={() => controller.setTextWrap(!isWrapped)}
+      />
+      <p className="text-[12px] leading-relaxed text-ink-faint">
+        Wrapped text keeps this box&rsquo;s width and grows downward. Unwrapped,
+        the box stays one auto-width line.
+      </p>
+      {o.roleKind === "variable" ? (
+        <p className="text-[12px] leading-relaxed text-ink-soft">
+          This fills from{" "}
+          <span className="font-mono text-ledger">{o.role ?? "these values"}</span>{" "}
+          when the bill is filled in.
+        </p>
+      ) : (
+        <p className="text-[12px] leading-relaxed text-ink-faint">
+          Fixed text &mdash; the same on every bill.
+        </p>
+      )}
+    </Section>
   );
 }
 
@@ -518,7 +611,7 @@ function TablePanel({
   };
 
   return (
-    <Panel title="Table">
+    <Section id="table" title="Table">
       <div className="grid grid-cols-2 gap-2">
         <Field label="Rows">
           <NumberInput value={o.rows} min={1} max={60} onChange={setRows} />
@@ -528,7 +621,7 @@ function TablePanel({
         </Field>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Border colour">
+        <Field label="Line colour">
           <ColorInput
             value={o.borderColor}
             onChange={(v) =>
@@ -538,7 +631,7 @@ function TablePanel({
             }
           />
         </Field>
-        <Field label="Border width">
+        <Field label="Line thickness">
           <NumberInput
             value={o.borderWidth}
             step={0.5}
@@ -552,7 +645,7 @@ function TablePanel({
         </Field>
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <Field label="Cell fill">
+        <Field label="Cell background">
           <ColorInput
             value={o.cellFill}
             onChange={(v) =>
@@ -562,7 +655,7 @@ function TablePanel({
             }
           />
         </Field>
-        <Field label="Padding">
+        <Field label="Cell padding">
           <NumberInput
             value={o.padding}
             min={0}
@@ -583,7 +676,7 @@ function TablePanel({
           }, "Header row")
         }
       />
-      <Field label="Header fill">
+      <Field label="Header background">
         <ColorInput
           value={o.headerFill}
           onChange={(v) =>
@@ -616,8 +709,8 @@ function TablePanel({
           </label>
           {state.selectedTable.repeat ? (
             <div className="mt-1 grid grid-cols-2 gap-2">
-              <label className="text-[11px]">
-                First row
+              <label className="text-[12px]">
+                From row
                 <input
                   type="number"
                   min={0}
@@ -631,8 +724,8 @@ function TablePanel({
                   }
                 />
               </label>
-              <label className="text-[11px]">
-                Last row
+              <label className="text-[12px]">
+                To row
                 <input
                   type="number"
                   min={0}
@@ -646,8 +739,8 @@ function TablePanel({
                   }
                 />
               </label>
-              <label className="col-span-2 text-[11px]">
-                Items key
+              <label className="col-span-2 text-[12px]">
+                Data name
                 <input
                   type="text"
                   value={state.selectedTable.repeat.key}
@@ -659,11 +752,12 @@ function TablePanel({
                   }
                 />
               </label>
-              <label className="text-[11px]">
-                Max items
+              <label className="text-[12px]">
+                Maximum
                 <input
                   type="number"
                   min={1}
+                  max={200}
                   value={state.selectedTable.repeat.maxItems ?? 200}
                   onChange={(e) =>
                     controller.setTableRepeat(state.selectedTable!.id, {
@@ -673,7 +767,7 @@ function TablePanel({
                   }
                 />
               </label>
-              <label className="flex items-center gap-2 text-[11px]">
+              <label className="flex items-center gap-2 text-[12px]">
                 <input
                   type="checkbox"
                   checked={state.selectedTable.repeat.repeatHeader === true}
@@ -684,7 +778,7 @@ function TablePanel({
                     })
                   }
                 />
-                Repeat header when split
+                Repeat the header
               </label>
             </div>
           ) : null}
@@ -737,7 +831,7 @@ function TablePanel({
 
       <details className="rounded border border-neutral-200">
         <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-medium text-neutral-600">
-          Cell contents
+          Cell text
         </summary>
         <div className="editor-scroll max-h-64 overflow-auto p-2">
           <table className="w-full border-collapse text-[10px]">
@@ -766,13 +860,13 @@ function TablePanel({
               ))}
             </tbody>
           </table>
-          <p className="mt-1.5 text-[10px] text-neutral-400">
+          <p className="mt-1.5 text-[12px] text-neutral-400">
             Tip: double click a cell on the canvas to edit it in place. Use
             double brace tokens such as item_name for dynamic data.
           </p>
         </div>
       </details>
-    </Panel>
+    </Section>
   );
 }
 
@@ -783,18 +877,22 @@ function TableCellPanel({
   controller: EditorController;
   state: EditorState;
 }) {
-  const table = controller
-    .getCanvas()
-    ?.getObjects()
-    .find((x): x is BillTable => x instanceof BillTable);
+  // The table named by the cell being edited, not the first one on the canvas:
+  // a page with two tables would otherwise edit the wrong one's cell, and the
+  // text the author typed would appear somewhere they did not choose.
+  const table = state.editingCell
+    ? controller.getTableById(state.editingCell.tableId)
+    : controller.getCanvas()
+        ?.getObjects()
+        .find((x): x is BillTable => x instanceof BillTable);
   if (!table || !state.editingCell) {
-    return <Panel title="Cell">No active cell.</Panel>;
+    return <Section id="cell" title="Cell">No active cell.</Section>;
   }
   const idx = state.editingCell.index;
   const cell = table.getCell(Math.floor(idx / table.columns), idx % table.columns);
 
   return (
-    <Panel title="Cell">
+    <Section id="cell" title="Cell">
       <Field label="Text">
         <TextInput
           value={cell.text}
@@ -829,7 +927,7 @@ function TableCellPanel({
       <p className="text-[10px] text-neutral-400">
         Tab moves to the next cell, Enter or Escape finishes.
       </p>
-    </Panel>
+    </Section>
   );
 }
 
@@ -843,8 +941,8 @@ function PlaceholderPanel({
   const [label, setLabel] = useState(o.label);
 
   return (
-    <Panel title="Image Placeholder">
-      <Field label="Role">
+    <Section id="slot" title="Picture slot">
+      <Field label="What goes here">
         <Select
           value={o.placeholderRole}
           onChange={(v) =>
@@ -871,7 +969,7 @@ function PlaceholderPanel({
           }}
         />
       </Field>
-    </Panel>
+    </Section>
   );
 }
 
@@ -885,8 +983,8 @@ function FieldPanel({
   const [key, setKey] = useState(o.key);
 
   return (
-    <Panel title="Field">
-      <Field label="Key" hint="Form key, e.g. invoice_date">
+    <Section id="data-field" title="Data field">
+      <Field label="Name" hint="The name this answer is saved under, e.g. invoice_date">
         <TextInput
           value={key}
           onChange={(e) => setKey(e.target.value)}
@@ -900,7 +998,7 @@ function FieldPanel({
           }}
         />
       </Field>
-      <Field label="Type">
+      <Field label="Type of answer">
         <Select
           value={o.fieldType}
           onChange={(v) =>
@@ -914,12 +1012,12 @@ function FieldPanel({
             { value: "number", label: "Number" },
             { value: "date", label: "Date" },
             { value: "currency", label: "Currency" },
-            { value: "tickmark", label: "Tickmark (✓/✗)" },
+            { value: "tickmark", label: "Tickmark (âœ“/âœ—)" },
             { value: "checkbox", label: "Checkbox" },
           ]}
         />
       </Field>
-      <Field label="Ink colour" hint="Also the colour the value prints in">
+      <Field label="Colour" hint="Also the colour the value prints in">
         <ColorInput
           value={o.fill}
           onChange={(v) =>
@@ -944,7 +1042,7 @@ function FieldPanel({
                 "Font",
               )
             }
-            options={FONTS}
+            options={FONT_OPTIONS}
           />
         </Field>
         <Field label="Size">
@@ -959,38 +1057,30 @@ function FieldPanel({
             }
           />
         </Field>
-        <Field label="Weight">
-          <Select
-            value={o.fontWeight}
-            onChange={(v) =>
-              controller.applyToSelection(
-                (obj) => obj.set({ fontWeight: v } as never),
-                "Weight",
-              )
-            }
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "bold", label: "Bold" },
-            ]}
-          />
-        </Field>
-        <Field label="Style">
-          <Select
-            value={o.fontStyle}
-            onChange={(v) =>
-              controller.applyToSelection(
-                (obj) => obj.set({ fontStyle: v } as never),
-                "Font style",
-              )
-            }
-            options={[
-              { value: "normal", label: "Normal" },
-              { value: "italic", label: "Italic" },
-            ]}
-          />
-        </Field>
       </div>
-      <Field label="Align" hint="Left, centre or right, as in a text box">
+      <BoldItalicButtons
+        bold={o.fontWeight === "bold"}
+        italic={o.fontStyle === "italic"}
+        onToggleBold={() =>
+          controller.applyToSelection(
+            (obj) =>
+              obj.set({
+                fontWeight: o.fontWeight === "bold" ? "normal" : "bold",
+              } as never),
+            "Weight",
+          )
+        }
+        onToggleItalic={() =>
+          controller.applyToSelection(
+            (obj) =>
+              obj.set({
+                fontStyle: o.fontStyle === "italic" ? "normal" : "italic",
+              } as never),
+            "Font style",
+          )
+        }
+      />
+      <Field label="Alignment" hint="Left, centre or right, as in a text box">
         <Select
           value={o.textAlign}
           onChange={(v) =>
@@ -1006,7 +1096,7 @@ function FieldPanel({
           ]}
         />
       </Field>
-      <Field label="Custom family" hint="Any installed face, e.g. My Custom Font">
+      <Field label="Custom font" hint="Any installed face, e.g. My Custom Font">
         <CustomFontInput
           value={o.fontFamily}
           onCommit={(v) =>
@@ -1017,7 +1107,7 @@ function FieldPanel({
           }
         />
       </Field>
-    </Panel>
+    </Section>
   );
 }
 
@@ -1042,10 +1132,10 @@ function MultiAppearancePanel({
   const paintable = selected.filter(acceptsSharedPaint);
 
   return (
-    <Panel title="Appearance">
+    <Section id="ink" title="Ink & outline">
       {paintable.length > 0 ? (
         <div className="grid grid-cols-2 gap-2">
-          <Field label="Stroke">
+          <Field label="Line colour">
             <div className="flex items-center gap-1">
               {shared.stroke === undefined ? <Mixed /> : null}
               <ColorInput
@@ -1058,7 +1148,7 @@ function MultiAppearancePanel({
               />
             </div>
           </Field>
-          <Field label="Stroke width">
+          <Field label="Line thickness">
             <div className="flex items-center gap-1">
               {shared.strokeWidth === undefined ? <Mixed /> : null}
               <NumberInput
@@ -1073,7 +1163,7 @@ function MultiAppearancePanel({
               />
             </div>
           </Field>
-          <Field label="Fill">
+          <Field label="Fill colour">
             <div className="flex items-center gap-1">
               {shared.fill === undefined ? <Mixed /> : null}
               <ColorInput
@@ -1085,7 +1175,7 @@ function MultiAppearancePanel({
         </div>
       ) : (
         <p className="text-[10px] leading-relaxed text-neutral-400">
-          None of these carry a stroke or fill of their own — a table&rsquo;s
+          None of these carry a stroke or fill of their own â€” a table&rsquo;s
           borders and a bill part&rsquo;s image have their own settings, so there
           is nothing here to share.
         </p>
@@ -1131,7 +1221,7 @@ function MultiAppearancePanel({
         applies to every object that has one. {state.objectCount} objects in
         document.
       </p>
-    </Panel>
+    </Section>
   );
 }
 
@@ -1164,7 +1254,15 @@ function MultiSelectPanel({
 }) {
   return (
     <>
-      <Panel title={`${selected.length} objects`}>
+      <IndexNav
+        sections={[
+          { id: "objects", label: `${selected.length} objects` },
+          { id: "ink", label: "Ink & outline" },
+          { id: "lineup", label: "Line up" },
+          { id: "group", label: "Group" },
+        ]}
+      />
+      <Section id="objects" title={`${selected.length} objects`}>
         <ul className="editor-scroll max-h-40 space-y-1 overflow-auto text-[11px]">
           {selected.map((o) => (
             <li key={o.id} className="truncate text-neutral-600">
@@ -1172,35 +1270,30 @@ function MultiSelectPanel({
             </li>
           ))}
         </ul>
-      </Panel>
+      </Section>
       <MultiAppearancePanel
         controller={controller}
         state={state}
         selected={selected}
       />
-      <Panel title="Align">
+      <Section id="lineup" title="Line up">
         <div className="grid grid-cols-3 gap-1">
-          {(
-            [
-              ["left", "⇤"],
-              ["center", "⇔"],
-              ["right", "⇥"],
-              ["top", "⤒"],
-              ["middle", "⇕"],
-              ["bottom", "⤓"],
-            ] as const
-          ).map(([k, icon]) => (
-            <Button key={k} title={`Align ${k}`} onClick={() => controller.align(k)}>
-              {icon}
+          {ALIGN_BUTTONS.map(([k, t, word]) => (
+            <Button key={k} title={t} onClick={() => controller.align(k)}>
+              {word}
             </Button>
           ))}
         </div>
         <div className="grid grid-cols-2 gap-1">
-          <Button onClick={() => controller.distribute("horizontal")}>Distribute H</Button>
-          <Button onClick={() => controller.distribute("vertical")}>Distribute V</Button>
+          <Button onClick={() => controller.distribute("horizontal")}>
+            Space evenly (H)
+          </Button>
+          <Button onClick={() => controller.distribute("vertical")}>
+            Space evenly (V)
+          </Button>
         </div>
-      </Panel>
-      <Panel title="Group">
+      </Section>
+      <Section id="group" title="Group">
         <div className="grid grid-cols-2 gap-1">
           <Button
             onClick={() => controller.groupSelection()}
@@ -1217,10 +1310,10 @@ function MultiSelectPanel({
         </div>
         <p className="text-[10px] leading-relaxed text-neutral-400">
           A group moves and selects as one structure. Groups are an editing aid
-          only — the exported bill is identical either way. Ungroup dissolves one
+          only â€” the exported bill is identical either way. Ungroup dissolves one
           without deleting anything.
         </p>
-      </Panel>
+      </Section>
       <p className="px-3 py-2 text-[10px] text-neutral-400">
         {state.objectCount} objects in document
       </p>

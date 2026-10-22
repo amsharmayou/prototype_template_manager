@@ -71,25 +71,28 @@ test.describe("Data-bound renderer page", () => {
     await loadFixtureTemplate(page);
 
     // Save to this device so the renderer page's library picks it up.
-    await page.getByRole("button", { name: "Save to My Templates" }).click();
+    await page.getByRole("button", { name: "Save", exact: true }).click();
     await page.waitForTimeout(200);
 
     await page.goto("/render");
     await expect(page.getByText("Saved templates on this device")).toBeVisible();
     await page.getByRole("button", { name: /acme-gmv/ }).click();
 
-    // The form mirrors the traced structure.
-    await expect(page.getByText("Invoice Number")).toBeVisible();
-    await expect(page.getByText("Invoice Date")).toBeVisible();
-    await expect(page.getByText("Item Name")).toBeVisible();
-    await expect(page.getByText("Logo").first()).toBeVisible();
+    // The form mirrors the traced structure. Scoped to the form pane: the
+    // optional-fields banner above the sheet repeats the same labels.
+    const formPane = page.locator("aside");
+    await expect(formPane.getByText("Invoice Number")).toBeVisible();
+    await expect(formPane.getByText("Invoice Date")).toBeVisible();
+    await expect(formPane.getByText("Item Name")).toBeVisible();
+    await expect(formPane.getByText("Logo").first()).toBeVisible();
 
     await page.getByRole("button", { name: "Fill sample data" }).click();
 
-    // The live preview shows the filled values, not the tokens.
+    // The live preview shows the filled values, not the tokens. The stored
+    // ISO date prints in the display shape the pipeline defaults to.
     const frame = page.frameLocator('iframe[title="Rendered document preview"]');
     await expect(frame.getByText(/INV-2026-1042/)).toBeVisible();
-    await expect(frame.getByText(/2026-10-03/)).toBeVisible();
+    await expect(frame.getByText(/03\/10\/2026/)).toBeVisible();
     await expect(frame.getByText(/A4 Notebook/)).toBeVisible();
 
     // PDF export produces a real, filled PDF.
@@ -119,11 +122,14 @@ test.describe("Data-bound renderer page", () => {
   }) => {
     await loadFixtureTemplate(page);
 
-    await page.getByRole("button", { name: /Fill & Render/ }).click();
+    await page
+      .locator("header")
+      .getByRole("button", { name: "Fill & print" })
+      .click();
     await page.waitForURL("**/render");
 
     // Same template, one click later: the form is already there.
-    await expect(page.getByText("Invoice Number")).toBeVisible();
+    await expect(page.locator("aside").getByText("Invoice Number")).toBeVisible();
     await page.getByRole("button", { name: "Fill sample data" }).click();
 
     const frame = page.frameLocator('iframe[title="Rendered document preview"]');
@@ -145,10 +151,13 @@ test.describe("Data-bound renderer page", () => {
       window.__btm.updatePlaceholder("invoice_date", { type: "date" });
     }, JSON.parse(JSON.stringify(TPL)));
 
-    await page.getByRole("button", { name: /Fill & Render/ }).click();
+    await page
+      .locator("header")
+      .getByRole("button", { name: "Fill & print" })
+      .click();
     await page.waitForURL("**/render");
 
-    await expect(page.getByText("Bill reference")).toBeVisible();
+    await expect(page.locator("aside").getByText("Bill reference")).toBeVisible();
     const reference = page.locator('input[name="invoice_number"]');
     await expect(reference).toHaveAttribute("maxlength", "8");
     // The spec's date override beats the key-name inference for the other one.

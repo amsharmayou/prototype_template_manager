@@ -1,0 +1,44 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 794,
+    "height": 1123
+  },
+  "meta": {
+    "name": "Blank sheet",
+    "modifiedAt": "",
+    "computed": []
+  },
+  "objects": [
+    {
+      "type": "text",
+      "id": "t_83",
+      "name": "ACME TRADING CO.",
+      "roleKind": "static",
+      "x": 40,
+      "width": 700,
+      "height": 22,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 0,
+      "fill": "#101010",
+      "fontFamily": "Arimo",
+      "fontSize": 20,
+      "fontWeight": "bold",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "textVerticalAlign": "top",
+      "scaleX": 1,
+      "scaleY": 1,
+      "text": "ACME TRADING CO.",
+      "y": 40
+    }
+  ]
+}
