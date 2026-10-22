@@ -201,9 +201,25 @@ export async function writePdf(pagesInput: readonly PdfPageInput[], options: Wri
       });
       continue;
     }
-    // Text lines: every line arrives pre-positioned; the writer only converts
-    // units and embeds subsets.
+    // Text lines. A shaped line (complex scripts) paints its glyphs as font
+    // outlines - the shapes are the text, so no font embedding and no fallback
+    // font are involved at all. Plain lines go through the embedded subset.
     for (const line of item.lines) {
+      if (line.glyphs !== undefined && line.glyphs.length > 0) {
+        if (options.refuseComplexScript && hasComplexScript(line.text)) {
+          refusals.push(`a text run near y=${line.baseline} needs shaping this runtime cannot do; refusing to substitute`);
+          continue;
+        }
+        const color = (() => { const c = toRgb(item.color); return rgb(c.r, c.g, c.b); })();
+        const svg = line.glyphs
+          .map((g) => options.book.glyphPathAt(line.font, g.gid, g.x, g.y, line.size))
+          .filter((p) => p.length > 0)
+          .join(" ");
+        if (svg.length > 0) {
+          await page.drawSvgPath(svg, { x: 0, y: pageH, scale: k, color });
+        }
+        continue;
+      }
       if (options.refuseComplexScript && hasComplexScript(line.text)) {
         refusals.push(`a text run near y=${line.baseline} needs shaping this runtime cannot do; refusing to substitute`);
         continue;

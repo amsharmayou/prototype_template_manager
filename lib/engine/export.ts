@@ -31,6 +31,10 @@ export async function loadFontBook(): Promise<FontBook> {
     sources.push([file, new Uint8Array(await response.arrayBuffer())]);
   }
   const { book } = FontBook.load(sources);
+  // The shaper is optional by contract: a runtime that cannot load it keeps
+  // printing Latin documents and refuses complex-script runs with a named
+  // message rather than substituting.
+  await book.attachShaper();
   return book;
 }
 

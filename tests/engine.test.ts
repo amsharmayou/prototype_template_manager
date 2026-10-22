@@ -184,11 +184,6 @@ describe("the pdf writer", () => {
       { objects: rendered.objects, page: rendered.page, warnings: rendered.warnings },
       { book, refuseComplexScript: true },
     );
-    const sampleTexts = refused.paint
-      .filter((p) => p.kind === "text")
-      .flatMap((p) => p.lines.map((l) => l.text))
-      .slice(0, 6);
-    console.log("HINDI:", JSON.stringify({ warnings: refused.warnings, sampleTexts, textCount: refused.paint.filter((p) => p.kind === "text").length }));
     expect(
       refused.paint.some((p) => p.kind === "text" && p.lines.some((l) => hasComplexScript(l.text))),
     ).toBe(false);
@@ -205,5 +200,45 @@ describe("the pdf writer", () => {
       refuseComplexScript: true,
     });
     expect(refusals.some((m) => m.includes("shaping"))).toBe(true);
+  });
+
+  it("prints a devanagari bill as shaped glyph outlines", async () => {
+    const book = loadBook();
+    expect(await book.attachShaper()).toBe(true);
+
+    const template = JSON.parse(
+      readFileSync(join(corpusDir, "hindi-bill.template.json"), "utf8"),
+    ) as BillTemplate;
+    const values = JSON.parse(readFileSync(join(corpusDir, "hindi-bill.values.json"), "utf8"));
+    const rendered = renderDocument(template, values, {
+      computed: computedSpecsFor(template),
+      display: displayMapFor(template),
+    });
+    const lists = buildDisplayPages(rendered.pages, rendered.warnings, { book });
+
+    // The shaped run carries real glyphs: shaped Devanagari produces a glyph
+    // sequence whose length differs from the character count (conjuncts and
+    // matras recompose), which plain text lines could never carry.
+    const shapedLines = lists
+      .flatMap((l) => l.paint)
+      .filter((p) => p.kind === "text")
+      .flatMap((p) => p.lines)
+      .filter((l) => l.glyphs !== undefined && l.glyphs.length > 0);
+    expect(shapedLines.length).toBeGreaterThan(0);
+    const glyphCount = shapedLines.reduce((a, l) => a + l.glyphs!.length, 0);
+    expect(glyphCount).toBeGreaterThan(4);
+    const withoutGlyphs = lists
+      .flatMap((l) => l.paint)
+      .filter((p) => p.kind === "text")
+      .flatMap((p) => p.lines)
+      .filter((l) => l.glyphs === undefined && hasComplexScript(l.text));
+    expect(withoutGlyphs).toEqual([]);
+
+    const first = await writePdf(lists, { book, title: template.meta?.name });
+    const second = await writePdf(lists, { book, title: template.meta?.name });
+    expect(first.refusals).toEqual([]);
+    expect(Buffer.from(first.bytes).equals(Buffer.from(second.bytes))).toBe(true);
+    const doc = await PDFDocument.load(first.bytes);
+    expect(doc.getPageCount()).toBe(1);
   });
 });

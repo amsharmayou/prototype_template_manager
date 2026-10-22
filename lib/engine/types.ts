@@ -35,6 +35,15 @@ export interface DisplayLine {
   spacing: number;
   /** Line width in px, from the font book. */
   width: number;
+  /**
+   * Shaped glyphs for lines a shaper laid out (complex scripts).
+   *
+   * Present only when a shaped run produced this line: `x`/`y` is each
+   * glyph's draw point in document px, baseline-anchored with y down, ready
+   * for the writer to paint as font outlines. Absent means the line is drawn
+   * as text.
+   */
+  glyphs?: Array<{ gid: number; x: number; y: number }>;
 }
 
 export type DisplayPaint =

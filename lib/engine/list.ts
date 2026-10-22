@@ -66,8 +66,61 @@ function layoutLines(
   text: string,
   style: TextStyle,
   box: { x: number; y: number; width: number; height: number },
-  opts: { lineHeight: number; wraps: boolean; align: "left" | "center" | "right"; vertical: "top" | "middle" | "bottom"; ref: FontRef; color: string },
+  opts: {
+    lineHeight: number;
+    wraps: boolean;
+    align: "left" | "center" | "right";
+    vertical: "top" | "middle" | "bottom";
+    ref: FontRef;
+    color: string;
+    /** Shape this run with the shaper (complex scripts) instead of plain text. */
+    shaped?: boolean;
+  },
 ): DisplayPaint {
+  const shapedWrap =
+    opts.shaped === true ? book.shapeWrapped(opts.ref, text, box.width) : undefined;
+  if (shapedWrap !== undefined) {
+    const lineBox = opts.lineHeight * style.size;
+    const metrics = book.metrics(opts.ref);
+    const upem = book.upemOf(opts.ref);
+    const k = style.size / upem;
+    const block = shapedWrap.length * lineBox;
+    const free = Math.max(0, box.height - block);
+    const top =
+      opts.vertical === "middle" ? box.y + free / 2
+      : opts.vertical === "bottom" ? box.y + free
+      : box.y;
+    const positioned: DisplayLine[] = [];
+    shapedWrap.forEach((line, i) => {
+      const width = (line.widthUnits * style.size) / upem;
+      const x =
+        opts.align === "center" ? box.x + (box.width - width) / 2
+        : opts.align === "right" ? box.x + box.width - width
+        : box.x;
+      const baseline =
+        top + i * lineBox + (lineBox - (metrics.asc + metrics.desc) * style.size) / 2 + metrics.asc * style.size;
+      // Per-glyph draw point: pen advances through the shaped sequence, each
+      // glyph offset by dx/dy, scaled from font units into document pixels.
+      let pen = 0;
+      const glyphs = line.glyphs.map((g) => {
+        const gx = x + (pen + g.dx) * k;
+        const gy = baseline - g.dy * k;
+        pen += g.ax + (opts.shaped ? (style.spacing ?? 0) / k : 0);
+        return { gid: g.gid, x: gx, y: gy };
+      });
+      positioned.push({
+        x,
+        baseline,
+        text: line.text,
+        font: opts.ref,
+        size: style.size,
+        spacing: style.spacing ?? 0,
+        width,
+        glyphs,
+      });
+    });
+    return { kind: "text", lines: positioned, color: opts.color };
+  }
   const lines = opts.wraps ? book.wrap(text, box.width, style) : text.split("\n");
   const lineBox = opts.lineHeight * style.size;
   const metrics = book.metrics(opts.ref);
@@ -212,13 +265,25 @@ export function buildDisplayList(input: ListInput, options: ListOptions): Displa
       const boxWidth = wrapWidth > 0 ? wrapWidth : Number(o.width);
       const align = (o.textAlign === "center" || o.textAlign === "right" ? o.textAlign : "left") as "left" | "center" | "right";
       const vertical = (o.textVerticalAlign === "middle" || o.textVerticalAlign === "bottom" ? o.textVerticalAlign : "top") as "top" | "middle" | "bottom";
+      const complex = hasComplexScript(text);
       paint.push(
         layoutLines(book, text, style, {
           x: Number(o.x),
           y: Number(o.y),
           width: boxWidth * sx,
           height: Number(o.height),
-        }, { lineHeight: typeof o.lineHeight === "number" ? o.lineHeight : 1.16, wraps: wrapWidth > 0, align, vertical, ref, color: hex(o.fill as string, "#000000") }),
+        }, {
+          lineHeight: typeof o.lineHeight === "number" ? o.lineHeight : 1.16,
+          wraps: wrapWidth > 0,
+          align,
+          vertical,
+          ref,
+          color: hex(o.fill as string, "#000000"),
+          // Complex runs are shaped only when a shaper is attached; otherwise
+          // the run paints the approximate metric path and the print writer
+          // refuses it rather than printing an unshaped approximation.
+          shaped: complex && book.shaperReady(),
+        }),
       );
       continue;
     }
@@ -315,7 +380,15 @@ function paintTable(
                 y: rowCursor,
                 width: Math.max(0, colW - o.padding * 2),
                 height: Math.max(0, rowH - o.padding * 2),
-              }, { lineHeight: 1.2, wraps: true, align: cell?.textAlign ?? "left", vertical: "middle", ref, color: hex(base, header ? hex(ink, "#000000") : hex(o.cellTextColor, "#000000")) }),
+              }, {
+                lineHeight: 1.2,
+                wraps: true,
+                align: cell?.textAlign ?? "left",
+                vertical: "middle",
+                ref,
+                color: hex(base, header ? hex(ink, "#000000") : hex(o.cellTextColor, "#000000")),
+                shaped: hasComplexScript(text) && book.shaperReady(),
+              }),
             );
           }
         }

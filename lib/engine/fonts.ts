@@ -13,6 +13,7 @@ import { Font, parse } from "opentype.js";
 
 import type { ContentMeasurement } from "@/lib/render/measure";
 import type { FontRef } from "./types";
+import { Shaper, type ShapedGlyphUnits, type OutlineCommand } from "./shaper";
 
 export interface FontEntry extends FontRef {
   /** True when the family substitutes for the named system stack. */
@@ -62,7 +63,144 @@ export class FontBook {
   private readonly bytes = new Map<string, Uint8Array>();
   private readonly missing = new Set<string>();
 
-  private constructor() {}
+  private constructor() {
+    this.shaper = undefined;
+  }
+
+  private shaper: Shaper | undefined;
+
+  /**
+   * Attach the HarfBuzz WASM shaper.
+   *
+   * Optional in both directions: a runtime without the module keeps printing
+   * Latin documents and refusing complex-script runs with a named message,
+   * while a runtime that loads it gains shaped glyph printing identical to the
+   * browser preview.
+   */
+  async attachShaper(): Promise<boolean> {
+    const { loadHarfBuzzModule, Shaper } = await import("./shaper");
+    const harfBuzzModule = await loadHarfBuzzModule();
+    if (!harfBuzzModule) return false;
+    this.shaper = Shaper.from(harfBuzzModule);
+    return true;
+  }
+
+  /** True once the shaping module is attached. */
+  shaperReady(): boolean {
+    return this.shaper !== undefined;
+  }
+
+  private hbHandle(ref: FontRef): { handle: { font: { setScale: (x: number, y: number) => void; drawGlyph: (glyph: number, drawFuncs: unknown, drawData?: unknown) => void }; upem: number }; bytes: Uint8Array } | undefined {
+    const bytes = this.bytes.get(ref.file);
+    if (!bytes || !this.shaper) return undefined;
+    return { handle: this.shaper.hbFontFor(bytes, ref.file), bytes };
+  }
+
+  /**
+   * Shape a run into glyph IDs and advances, in font units.
+   *
+   * Returns undefined when the shaper is not attached - callers then fall back
+   * to their non-shaping contract.
+   */
+  shapeRun(ref: FontRef, text: string): ShapedGlyphUnits[] | undefined {
+    const bound = this.hbHandle(ref);
+    if (!bound) return undefined;
+    return this.shaper!.shape(bound.handle, text, bound.bytes).glyphs;
+  }
+
+  /** The upem for a face, or 1000 if the shaper has not seen it. */
+  upemOf(ref: FontRef): number {
+    const bound = this.hbHandle(ref);
+    return bound ? bound.handle.upem : 1000;
+  }
+
+  /** One glyph's outline in font units, y up, origin at its draw point. */
+  glyphOutline(ref: FontRef, gid: number): OutlineCommand[] | undefined {
+    const bound = this.hbHandle(ref);
+    if (!bound) return undefined;
+    return this.shaper!.outline(bound.handle, gid);
+  }
+
+  /**
+   * One glyph's outline as an SVG path in document pixels, positioned at its
+   * draw point with y flipped into the page's downward coordinate space.
+   *
+   * The writer paints these with a fill and no font at all, which is how a
+   * shaped (complex-script) run prints: the outlines are the text.
+   */
+  glyphPathAt(ref: FontRef, gid: number, originX: number, originY: number, size: number): string {
+    const bound = this.hbHandle(ref);
+    if (!bound || !this.shaper) return "";
+    const k = size / bound.handle.upem;
+    const parts: string[] = [];
+    for (const c of this.shaper.outline(bound.handle, gid)) {
+      switch (c.op) {
+        case "M":
+          parts.push(`M ${(originX + c.args[0]! * k).toFixed(2)} ${(originY - c.args[1]! * k).toFixed(2)}`);
+          break;
+        case "L":
+          parts.push(`L ${(originX + c.args[0]! * k).toFixed(2)} ${(originY - c.args[1]! * k).toFixed(2)}`);
+          break;
+        case "Q":
+          parts.push(`Q ${(originX + c.args[0]! * k).toFixed(2)} ${(originY - c.args[1]! * k).toFixed(2)} ${(originX + c.args[2]! * k).toFixed(2)} ${(originY - c.args[3]! * k).toFixed(2)}`);
+          break;
+        case "C":
+          parts.push(
+            `C ${(originX + c.args[0]! * k).toFixed(2)} ${(originY - c.args[1]! * k).toFixed(2)} ` +
+            `${(originX + c.args[2]! * k).toFixed(2)} ${(originY - c.args[3]! * k).toFixed(2)} ` +
+            `${(originX + c.args[4]! * k).toFixed(2)} ${(originY - c.args[5]! * k).toFixed(2)}`,
+          );
+          break;
+        case "Z":
+          parts.push("Z");
+          break;
+      }
+    }
+    return parts.join(" ");
+  }
+
+  /**
+   * Break shaped text at a width, returning each line's glyphs in font units
+   * (the width too). The caller converts to pixels with the face's upem and
+   * the run's own font size - the book keeps everything in one unambiguous
+   * unit.
+   *
+   * Words (and the spaces between them) are shaped separately: HarfBuzz
+   * features do not reach across spaces, so per-word shaping produces the same
+   * glyph sequence a whole-line shape would, while making the line-break
+   * decision a simple width sum.
+   */
+  shapeWrapped(
+    ref: FontRef,
+    text: string,
+    maxWidthUnits: number,
+  ): Array<{ glyphs: ShapedGlyphUnits[]; widthUnits: number; text: string }> | undefined {
+    const bound = this.hbHandle(ref);
+    if (!bound) return undefined;
+    const maxUnits = maxWidthUnits > 0 ? maxWidthUnits : Number.POSITIVE_INFINITY;
+    const lines: Array<{ glyphs: ShapedGlyphUnits[]; widthUnits: number; text: string }> = [];
+    let current: ShapedGlyphUnits[] = [];
+    let currentUnits = 0;
+    let currentText = "";
+    const flush = () => {
+      lines.push({ glyphs: current, widthUnits: currentUnits, text: currentText });
+      current = [];
+      currentUnits = 0;
+      currentText = "";
+    };
+    for (const segment of text.split(/(\s+)/)) {
+      if (segment.length === 0) continue;
+      const shaped = this.shaper!.shape(bound.handle, segment, bound.bytes);
+      if (currentUnits > 0 && currentUnits + shaped.width > maxUnits) flush();
+      // A word wider than the line is kept whole: cutting inside a shaped
+      // sequence would split a conjunct and print nonsense.
+      current = current.concat(shaped.glyphs);
+      currentUnits += shaped.width;
+      currentText += segment;
+    }
+    if (current.length > 0 || lines.length === 0) flush();
+    return lines;
+  }
 
   /** Build a book from font bytes, keyed by archive-relative file path. */
   static load(
