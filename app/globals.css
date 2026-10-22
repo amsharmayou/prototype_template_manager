@@ -1,8 +1,57 @@
 @import "tailwindcss";
 
+:root {
+  --font-archivo: Arial, Helvetica, sans-serif;
+  --font-bitter: Georgia, "Times New Roman", serif;
+  --font-plex-mono: "Cascadia Mono", Consolas, monospace;
+}
+
+/*
+ * Ink on paper. The palette is functional, not decorative: ink is the
+ * structure you draw, ledger green is data (never a button fill), stamp red is
+ * delete/errors only, marker amber is warnings only.
+ */
+@theme {
+  --color-ink: #16203a;
+  --color-ink-soft: #4a5570;
+  --color-ink-faint: #8891a8;
+  --color-paper: #fbfaf7;
+  --color-desk: #e7e6e1;
+  --color-rule: #d6d5cf;
+  --color-ledger: #0e7c5a;
+  --color-stamp: #b3242b;
+  --color-marker: #c77e0a;
+  --color-ledger-wash: #e6f4ee;
+  --color-stamp-wash: #fbeceb;
+  --color-marker-wash: #fdf3e3;
+}
+
 @theme inline {
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-archivo);
+  --font-mono: var(--font-plex-mono);
+  --font-display: var(--font-bitter);
+}
+
+@layer base {
+  /* One focus ring for the whole product. */
+  :focus-visible {
+    outline: 2px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-ledger-wash);
+  }
+}
+
+/* Motion is a courtesy: honour the system setting everywhere at once. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 html,
@@ -10,18 +59,21 @@ body {
   height: 100%;
 }
 
-/* Dense editor chrome: keep scrollbars thin so the 3-pane layout stays readable */
+/* Dense editor chrome: keep scrollbars thin so the panes stay readable */
 .editor-scroll {
   scrollbar-width: thin;
-  scrollbar-color: rgb(163 163 163) transparent;
+  scrollbar-color: var(--color-rule) transparent;
 }
 .editor-scroll::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 .editor-scroll::-webkit-scrollbar-thumb {
-  background-color: rgb(163 163 163);
+  background-color: var(--color-rule);
   border-radius: 4px;
+}
+.editor-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-ink-faint);
 }
 .editor-scroll::-webkit-scrollbar-track {
   background: transparent;
@@ -44,27 +96,27 @@ input[type="range"].tight-range {
 input[type="range"].tight-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  height: 0.85rem;
-  width: 0.85rem;
+  height: 0.9rem;
+  width: 0.9rem;
   border-radius: 9999px;
-  background: rgb(37 99 235);
+  background: var(--color-ink);
   cursor: pointer;
 }
 input[type="range"].tight-range::-webkit-slider-runnable-track {
   height: 0.25rem;
   border-radius: 9999px;
-  background: rgb(212 212 212);
+  background: var(--color-rule);
 }
 input[type="range"].tight-range::-moz-range-thumb {
-  height: 0.85rem;
-  width: 0.85rem;
+  height: 0.9rem;
+  width: 0.9rem;
   border: none;
   border-radius: 9999px;
-  background: rgb(37 99 235);
+  background: var(--color-ink);
   cursor: pointer;
 }
 input[type="range"].tight-range::-moz-range-track {
   height: 0.25rem;
   border-radius: 9999px;
-  background: rgb(212 212 212);
+  background: var(--color-rule);
 }

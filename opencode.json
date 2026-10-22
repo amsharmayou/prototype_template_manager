@@ -1,0 +1,268 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "myprovider": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "B.AI",
+      "options": {
+        "baseURL": "https://api.b.ai/v1",
+        "apiKey": "sk-4205l8kzjbuo2pcojipvboaofrlcb7rd",
+        "headers": {
+          "Authorization": "Bearer sk-4205l8kzjbuo2pcojipvboaofrlcb7rd"
+        }
+      },
+      "models": {
+        "deepseek-v4-flash": {
+          "name": "deepseek-v4-flash"
+        },
+        "glm-5.3-flash": {
+          "name": "glm-5.3-flash"
+        },
+        "deepseek-v4-flash-vision-exp": {
+          "name": "deepseek-v4-flash-vision-exp"
+        },
+        "hy3": {
+          "name": "hy3"
+        },
+        "qwen3.8-flash":{
+          "name": "qwen3.8-flash"
+        }
+      }
+    },
+    "unorouter-live": {
+      "name": "UnoRouter",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "sk-hB6HKEscIZJK6PZBnMZWIHuNMPZlyP1Npdd2R5CUiGJfqZAj",
+        "baseURL": "https://api.unorouter.com/v1"
+      },
+      "models": {
+        "ling-3.0-flash-fin:free": {},
+        "glm-5.3-flash-search:free": {},
+        "glm-5.3-flash-think-search:free": {},
+        "glm-5.3-flash-thinking:free": {},
+        "glm-5.3-flash:free": {}
+      }
+    }
+  ,
+    "explabs": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Experiential Labs",
+      "options": {
+        "baseURL": "https://api.experientiallabs.ai/v1",
+        "apiKey": "xpl_dd124a40486ba86a4fa2e9ee253a7778f1f96a73"
+      },
+      "models": {
+        "gpt-6-astra": {
+          "name": "GPT-6-Astra",
+        }
+      }
+    },
+    "xkiro": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "xKiro",
+      "options": {
+        "baseURL": "https://api.xkiro.com/v1",
+        "apiKey": "sk-xt-345bf0516628cdf2e31e4e4e6422a1354fce82d35f336847"
+      },
+      "models": {
+        "deepseek/deepseek-v4-flash": { "name": "Deepseek-v4-flash" },
+        "deepseek/deepseek-v4-pro": { "name": "Deepseek-v4-pro" },
+        "z-ai/glm-5.2": { "name": "GLM-5.2" },
+        "qwen/qwen3.8-max": { "name": "Qwen3.8 Max" }
+      }
+    },
+    "agentrouter": {
+      "npm": "@ai-sdk/anthropic",
+      "name": "AgentRouter",
+      "options": {
+        "baseURL": "https://agentrouter.org/v1",
+        "apiKey": "sk-XlX3IG2U3ct4JGJywejPyqKty9pNuNbc695bzbCFQznrqKda",
+        "headers": {
+          "Authorization": "Bearer sk-XlX3IG2U3ct4JGJywejPyqKty9pNuNbc695bzbCFQznrqKda"
+        }
+      },
+      "models": {
+        "claude-opus-4-8": {
+          "name": "claude-opus-4-8"
+        },
+        "claude-opus-5": {
+          "name": "claude-opus-5"
+        }
+      }
+    },
+    "omniroute": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OmniRoute",
+      "options": {
+        "baseURL": "http://localhost:20128/v1",
+        "apiKey": "sk-e5ee2a0f2b49b2b6-17d374-ae63b8d3"
+      },
+      "models": {
+        "auto": { "name": "auto" },
+        "auto/coding": { "name": "auto/coding" },
+        "auto/fast": { "name": "auto/fast" },
+        "auto/cheap": { "name": "auto/cheap" },
+        "kr/claude-sonnet-4.5": { "name": "kr/claude-sonnet-4.5" },
+        "oc/deepseek-v4-flash-free": { "name": "oc/deepseek-v4-flash-free" }
+      }
+    },
+    "tokenharbor": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "TokenHarbor",
+      "options": {
+        "baseURL": "https://tokenharbor.ai/v1",
+        "apiKey": "thk_live_kGG9no5M1e0HBP1ezt-z1Ewiu9Xnm_zePuq0MUPMhNgoEw01v7i-3ZSe_zOeUnGh"
+      },
+      "models": {
+        "deepseek-v4.1-flash:free": { "name": "DeepSeek V4.1 Flash" },
+        "deepseek-v4-flash:free": { "name": "DeepSeek V4 Flash" },
+        "qwen3.8-flash:free":{ "name": "Qwen 3.8 Flash" }
+      }
+    },
+    "dahlglobal": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "DahlGlobal",
+      "options": {
+        "baseURL": "https://inference.dahl.global/v1",
+        "apiKey": "dahl_MCv9NDo2dJ3VGPq3ibEuBHvmTkmpqekqf",
+        "headers": {
+          "Authorization": "Bearer dahl_MCv9NDo2dJ3VGPq3ibEuBHvmTkmpqekqf"
+        }
+      },
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Flash-0731": { "name": "Deepseek v4 Flash" }
+      }
+    },
+    "atria": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Atria",
+      "options": {
+        "baseURL": "https://api.atria-asi.ai/v1",
+        "apiKey": "atr_SeraNeM-14_d2hHyZyA7xu6OraXDxLNE",
+        "headers": {
+          "Authorization": "Bearer atr_SeraNeM-14_d2hHyZyA7xu6OraXDxLNE"
+        }
+      },
+      "models": {
+        "Atria-Dawn-Preview": { "name": "Atria-Dawn-Preview" }
+      }
+    },
+    "apinex": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "APINex",
+      "options": {
+        "baseURL": "https://api.apinex.bond/v1",
+        "apiKey": "sk-apxcd16d81eb938612384cd62f945f761ba9d1f077ab3a3099",
+        "headers": {
+          "Authorization": "Bearer sk-apxcd16d81eb938612384cd62f945f761ba9d1f077ab3a3099"
+        }
+      },
+      "models": {
+        "free/glm-5.3-flash": {
+          "name": "GLM 5.3 Flash (free)",
+          "tool_call": true,
+        },
+        "free/deepseek-v4.1-flash": {
+          "name": "DeepSeek V4.1 Flash (free)",
+          "tool_call": true,
+        },
+        "free/deepseek-v4-pro-0813": {
+          "name": "DeepSeek V4 Pro 0813 (free)",
+          "tool_call": true,
+        },
+        "free/gpt-6-luna": {
+          "name": "GPT-6 Luna (free)",
+          "tool_call": true,
+        },
+      },
+    },
+  },
+  }
+
+
+
+// sk-32he3utsa2rfhr63j5lpcp7aif2ejqca
+
+// sk-4205l8kzjbuo2pcojipvboaofrlcb7rd
+
+
+// "provider": {
+//     "xkiro": {
+//       "npm": "@ai-sdk/openai-compatible",
+//       "name": "xKiro",
+//       "options": {
+//         "baseURL": "https://api.xkiro.com/v1",
+//         "apiKey": "sk-xt-345bf0516628cdf2e31e4e4e6422a1354fce82d35f336847"
+//       },
+//       "models": {
+//         "openai/gpt-5.6-sol": { "name": "GPT-5.6 Sol" },
+//         "z-ai/glm-5.2": { "name": "GLM-5.2" },
+//         "qwen/qwen3.8-max": { "name": "Qwen3.8 Max" }
+//       }
+//     }
+//   }
+
+
+//   sk-xt-345bf0516628cdf2e31e4e4e6422a1354fce82d35f336847
+  
+  
+  
+  
+//   "provider": {
+//       "explabs": {
+//         "npm": "@ai-sdk/openai-compatible",
+//         "name": "Experiential Labs",
+//         "options": {
+//           "baseURL": "https://api.experientiallabs.ai/v1",
+//           "apiKey": "xpl_dd124a40486ba86a4fa2e9ee253a7778f1f96a73"
+//         },
+//         "models": {
+//           "gpt-6-astra": {
+//             "name": "GPT-6-Astra",
+//           }
+//         }
+//       }
+
+
+//       xpl_dd124a40486ba86a4fa2e9ee253a7778f1f96a73
+
+
+
+//       omniroute - sk-e5ee2a0f2b49b2b6-17d374-ae63b8d3
+      
+      
+      
+      
+//       token harbor - thk_live_2O3wXygJgQMc7I13Y2-dfoBNa4Xxz9sCAaSRPZ9RlJ0eePWq7N0Rlcuc-qlMTOtU
+
+                    //  - thk_live_kGG9no5M1e0HBP1ezt-z1Ewiu9Xnm_zePuq0MUPMhNgoEw01v7i-3ZSe_zOeUnGh
+
+//       "provider": {
+//         "apinex": {
+//           "npm": "@ai-sdk/openai-compatible",
+//           "name": "APINex",
+//           "options": {
+//             "baseURL": "https://api.apinex.bond/v1",
+//             "apiKey": "YOUR_API_KEY_HERE",
+//           },
+//           "models": {
+//             "free/glm-5.3-flash": {
+//               "name": "GLM 5.3 Flash (free)",
+//               "tool_call": true,
+//             },
+//             "free/deepseek-v4.1-flash": {
+//               "name": "DeepSeek V4.1 Flash (free)",
+//               "tool_call": true,
+//             },
+//             "free/deepseek-v4-pro-0813": {
+//               "name": "DeepSeek V4 Pro 0813 (free)",
+//               "tool_call": true,
+//             },
+//             "free/gpt-6-luna": {
+//               "name": "GPT-6 Luna (free)",
+//               "tool_call": true,
+//             },
+//           },
+//         },
+//       },

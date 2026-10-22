@@ -80,7 +80,7 @@ async function markBand(page: import("@playwright/test").Page) {
 
   // The panel defaults the band to every row but the first; narrow it to one so
   // a trailer row is left for the total.
-  const lastRow = page.getByLabel("Last row");
+  const lastRow = page.getByLabel("To row");
   await lastRow.click();
   await lastRow.press("Control+a");
   await lastRow.type("1");

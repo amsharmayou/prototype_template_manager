@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Bill Template Maker — design sheet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Bitter:wght@500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #16203a;
+    --ink-soft: #4a5570;
+    --ink-faint: #8891a8;
+    --paper: #fbfaf7;
+    --desk: #e7e6e1;
+    --rule: #d6d5cf;
+    --ledger: #0e7c5a;
+    --ledger-wash: #e6f4ee;
+    --stamp: #b3242b;
+    --stamp-wash: #fbeceb;
+    --marker: #c77e0a;
+    --marker-wash: #fdf3e3;
+    --r-ctl: 6px;
+    --r-card: 10px;
+    --r-dlg: 12px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--desk);
+    color: var(--ink);
+    font: 13px/1.5 "Archivo", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 72px; }
+  .eyebrow {
+    font: 600 11px/1 "Archivo"; letter-spacing: .12em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  h1 { font: 600 30px/1.2 "Bitter", Georgia, serif; margin: 10px 0 6px; }
+  h2 { font: 600 17px/1.3 "Bitter", Georgia, serif; margin: 0 0 4px; }
+  h3 { font: 600 13px/1.3 "Archivo"; margin: 0 0 2px; }
+  p.lead { color: var(--ink-soft); max-width: 62ch; margin: 0 0 34px; }
+  section { margin: 0 0 34px; }
+  .card {
+    background: var(--paper); border: 1px solid var(--rule);
+    border-radius: var(--r-card); padding: 20px 22px;
+  }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+  .swatch { border-radius: var(--r-card); overflow: hidden; border: 1px solid var(--rule); background: var(--paper); }
+  .chipcolor { height: 74px; }
+  .swatch .meta { padding: 10px 12px; }
+  .swatch .name { font-weight: 600; font-size: 13px; }
+  .swatch .hex { font: 400 11px/1.6 "IBM Plex Mono"; color: var(--ink-faint); }
+  .swatch .role { font-size: 12px; color: var(--ink-soft); margin-top: 4px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  button { font: 500 13px "Archivo"; border-radius: var(--r-ctl); padding: 8px 14px; cursor: default; border: 1px solid transparent; }
+  .btn-primary { background: var(--ink); color: var(--paper); }
+  .btn-secondary { background: var(--paper); color: var(--ink); border-color: var(--rule); }
+  .btn-danger { background: var(--paper); color: var(--stamp); border-color: #e8c6c4; }
+  .btn-ghost { background: transparent; color: var(--ink-soft); }
+  input[type=text], select {
+    font: 400 13px "Archivo"; padding: 7px 10px; border: 1px solid var(--rule);
+    border-radius: var(--r-ctl); background: var(--paper); color: var(--ink); width: 190px;
+  }
+  input:focus, select:focus { outline: 2px solid var(--ink); outline-offset: 2px; border-color: var(--ink); }
+  .tok {
+    font: 500 12px "IBM Plex Mono"; background: var(--ledger-wash); color: var(--ledger);
+    border-radius: 5px; padding: 2px 7px;
+  }
+  .badge {
+    font: 500 11px "Archivo"; border-radius: 999px; padding: 2px 9px; display: inline-block;
+  }
+  .b-data { background: var(--ledger-wash); color: var(--ledger); }
+  .b-warn { background: var(--marker-wash); color: var(--marker); }
+  .b-err { background: var(--stamp-wash); color: var(--stamp); }
+  .toast {
+    display: flex; gap: 10px; align-items: flex-start; border-radius: var(--r-ctl);
+    padding: 10px 14px; border: 1px solid var(--rule); background: var(--paper); max-width: 380px;
+  }
+  .toast strong { display: block; font-size: 13px; }
+  .toast span { font-size: 12px; color: var(--ink-soft); }
+  .bar { width: 3px; border-radius: 2px; align-self: stretch; }
+  .bar-ok { background: var(--ledger); } .bar-warn { background: var(--marker); } .bar-err { background: var(--stamp); }
+  .sect-hd {
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1px solid var(--rule); padding-bottom: 6px; margin: 0 0 10px;
+  }
+  .stage { background: var(--desk); border-radius: var(--r-card); padding: 26px; border: 1px solid var(--rule); }
+  .sheet {
+    background: #fff; border-radius: 3px; padding: 22px 24px; margin: 0 auto; max-width: 520px;
+    box-shadow: 0 1px 2px rgba(22,32,58,.10), 0 14px 34px rgba(22,32,58,.16);
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .sheet .doc-title { font: 600 15px "Bitter"; color: var(--ink); margin-bottom: 14px; }
+  .sheet .line { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #ecebe6; }
+  .slot {
+    border: 1px dashed var(--ledger); background: var(--ledger-wash);
+    border-radius: 4px; padding: 1px 6px; font: 500 11px "IBM Plex Mono"; color: var(--ledger);
+  }
+  .ghost { color: #c3c8d4; }
+  .type-row { border-bottom: 1px solid var(--rule); padding: 12px 0; display: grid; grid-template-columns: 130px 1fr; gap: 18px; align-items: baseline; }
+  .type-row:last-child { border: 0; padding-bottom: 0; }
+  .type-row .lbl { font: 600 11px "Archivo"; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-faint); }
+  .d-bitter { font: 600 26px/1.2 "Bitter"; }
+  .d-archivo { font: 400 14px/1.6 "Archivo"; }
+  .d-mono { font: 400 13px/1.6 "IBM Plex Mono"; }
+  .note { font-size: 12px; color: var(--ink-faint); margin-top: 10px; }
+  code { font: 500 12px "IBM Plex Mono"; background: var(--desk); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="eyebrow">Bill Template Maker · design sheet v1</div>
+  <h1>Ink on paper</h1>
+  <p class="lead">
+    The product already has a visual language — it is your bill. Ink is the structure you draw,
+    paper is the sheet it sits on, ledger green is the data that fills it, and stamp red is only
+    ever a warning or a delete. Colour means one thing each, everywhere.
+  </p>
+
+  <section>
+    <div class="sect-hd"><h2>Palette</h2><span class="eyebrow">8 tokens</span></div>
+    <div class="cols">
+      <div class="swatch"><div class="chipcolor" style="background:#16203a"></div>
+        <div class="meta"><div class="name">Ink</div><div class="hex">#16203A</div>
+        <div class="role">Text, structure, primary buttons</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#4a5570"></div>
+        <div class="meta"><div class="name">Ink soft</div><div class="hex">#4A5570</div>
+        <div class="role">Secondary text, hints</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#fbfaf7; border-bottom:1px solid #d6d5cf"></div>
+        <div class="meta"><div class="name">Paper</div><div class="hex">#FBFAF7</div>
+        <div class="role">Panels, the sheet</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#e7e6e1"></div>
+        <div class="meta"><div class="name">Desk</div><div class="hex">#E7E6E1</div>
+        <div class="role">Work surface behind the sheet</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#d6d5cf"></div>
+        <div class="meta"><div class="name">Rule</div><div class="hex">#D6D5CF</div>
+        <div class="role">Hairlines, dividers, borders</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#0e7c5a"></div>
+        <div class="meta"><div class="name">Ledger</div><div class="hex">#0E7C5A</div>
+        <div class="role">Data &amp; variables. Never a button.</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#b3242b"></div>
+        <div class="meta"><div class="name">Stamp</div><div class="hex">#B3242B</div>
+        <div class="role">Delete &amp; errors only</div></div></div>
+      <div class="swatch"><div class="chipcolor" style="background:#c77e0a"></div>
+        <div class="meta"><div class="name">Marker</div><div class="hex">#C77E0A</div>
+        <div class="role">Warnings only</div></div></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sect-hd"><h2>Type</h2><span class="eyebrow">3 roles</span></div>
+    <div class="card">
+      <div class="type-row">
+        <div class="lbl">Bitter · display</div>
+        <div><div class="d-bitter">Trace your bill</div>
+        <div class="note">Wordmark, step names, section headlines. A slab serif — the typewriter and the printed bill book.</div></div>
+      </div>
+      <div class="type-row">
+        <div class="lbl">Archivo · interface</div>
+        <div><div class="d-archivo">Draw a box around the total, then mark it as data so the form can fill it.</div>
+        <div class="note">All UI text, 12–14px. Sturdy and legible where it matters, at the sizes people actually read.</div></div>
+      </div>
+      <div class="type-row">
+        <div class="lbl">IBM Plex Mono · data</div>
+        <div><div class="d-mono">{{customer_name}} · guide-1 @ 373px · 1,240.00 · 1127 × 871</div>
+        <div class="note">Variables, guide ids, coordinates, money. Anything a machine reads rather than a person.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sect-hd"><h2>Controls</h2><span class="eyebrow">32px, 6px radius, ink focus ring</span></div>
+    <div class="card">
+      <div class="row" style="margin-bottom:16px">
+        <button class="btn-primary">Save</button>
+        <button class="btn-secondary">Preview</button>
+        <button class="btn-ghost">Cancel</button>
+        <button class="btn-danger">Delete object</button>
+      </div>
+      <div class="row" style="margin-bottom:16px">
+        <input type="text" value="Shop Bill" />
+        <select><option>Grow taller if needed</option></select>
+        <label class="row" style="gap:6px"><input type="checkbox" checked /> <span>Show photo</span></label>
+      </div>
+      <div class="row">
+        <span class="tok">{{invoice_no}}</span>
+        <span class="tok">{{total}}</span>
+        <span class="badge b-data">Data</span>
+        <span class="badge b-warn">Overlaps</span>
+        <span class="badge b-err">Refused</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sect-hd"><h2>Signature — the live overlay</h2><span class="eyebrow">step ③ Mark data</span></div>
+    <div class="stage">
+      <div class="sheet">
+        <div class="doc-title">SHARMA &amp; SONS <span class="ghost">— Tax Invoice</span></div>
+        <div class="line"><span>Invoice no.</span><span class="slot">{{invoice_no}}</span></div>
+        <div class="line"><span class="ghost">Date</span><span class="slot">{{invoice_date}}</span></div>
+        <div class="line"><span class="ghost">GSTIN</span><span class="ghost">27ABCDE1234F1Z5</span></div>
+        <div class="line" style="border:0"><span class="ghost">Total</span><span class="slot">{{total}}</span></div>
+      </div>
+    </div>
+    <p class="note">
+      Everything you traced keeps its ink; every slot that will change lifts into ledger green with its
+      variable name in mono. Hovering a name in the left list lights its box on the sheet. This is the
+      one screen that says what the product actually does: this is the paper, this is the data.
+    </p>
+  </section>
+
+  <section>
+    <div class="sect-hd"><h2>Feedback</h2><span class="eyebrow">replaces window.alert</span></div>
+    <div class="row">
+      <div class="toast"><div class="bar bar-ok"></div><div><strong>Saved</strong><span>“Shop Bill” is in My templates.</span></div></div>
+      <div class="toast"><div class="bar bar-warn"></div><div><strong>2 fields overlap</strong><span>Nothing was moved. Fix them or ignore this.</span></div></div>
+      <div class="toast"><div class="bar bar-err"></div><div><strong>That file isn’t a bill template</strong><span>Pick a .json saved from this editor.</span></div></div>
+    </div>
+  </section>
+
+  <p class="note">
+    Radii 6 / 10 / 12px · spacing 4·8·12·16·24·32 · motion 120–200ms ease-out, reduced-motion respected ·
+    focus is a 2px ink ring at 2px offset, visible on paper and desk · minimum text 12px, minimum target 32px.
+  </p>
+
+</div>
+</body>
+</html>

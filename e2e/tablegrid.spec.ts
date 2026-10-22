@@ -272,7 +272,7 @@ test("an exported table's grid lines are not doubled", async ({ page }) => {
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 20_000 }),
     (async () => {
-      await page.getByRole("button", { name: /Export/ }).click();
+      await page.getByRole("button", { name: /Get a copy/ }).click();
       await page.getByRole("button", { name: "SVG" }).click();
     })(),
   ]);
@@ -286,3 +286,123 @@ test("an exported table's grid lines are not doubled", async ({ page }) => {
   // No per-cell stroked rectangles left behind.
   expect(svg).not.toMatch(/<rect[^>]*fill="none"[^>]*stroke=/);
 });
+/**
+ * Double-clicking a cell opens it for editing in place.
+ *
+ * The inspector has always told the author to double click a cell on the canvas
+ * to edit it in place, but nothing listened for the double click: the inline
+ * editor was mounted and unreachable, so the documented interaction did not
+ * exist. Driven here rather than in a unit test because it is canvas input,
+ * which this project's Playwright suite covers.
+ */
+test("double clicking a cell opens it for editing in place", async ({ page }) => {
+  await page.goto("/");
+  await page
+    .locator('input[type="file"][accept*="image/png"]')
+    .first()
+    .setInputFiles(FIXTURE);
+  await page.locator("canvas.upper-canvas").waitFor({ state: "attached" });
+  await page.waitForFunction(() => Boolean(window.__btm?.getCanvas()));
+  await page.waitForTimeout(600);
+  await page.evaluate(() => window.__btm.setZoom(1));
+  await page.waitForTimeout(300);
+
+  // Draw a 2x2 table with the real tool, as the other specs here do.
+  await page.getByTitle(/^Table/i).click();
+  await page.waitForTimeout(150);
+  const box = await page.evaluate(() => {
+    const canvas = window.__btm.getCanvas()!;
+    const r = canvas.upperCanvasEl.getBoundingClientRect();
+    const s = window.__btm.getSnapshot();
+    return {
+      ax: r.left + s.tx + 200,
+      ay: r.top + s.ty + 200,
+      bx: r.left + s.tx + 500,
+      by: r.top + s.ty + 380,
+    };
+  });
+  await page.mouse.move(box.ax, box.ay);
+  await page.mouse.down();
+  await page.mouse.move(box.bx, box.by, { steps: 6 });
+  await page.mouse.up();
+  await page.waitForTimeout(400);
+  const dialog = page.getByRole("dialog");
+  await rowsInputUpdate(page, dialog, "2", "2");
+  await page.getByRole("button", { name: "Create" }).click();
+  await page.waitForTimeout(600);
+
+  // Back to the select tool, which is the only tool that opens a cell: a double
+  // click while drawing must not drop the author into a textarea.
+  await page.getByTitle(/^Select/i).click();
+  await page.waitForTimeout(150);
+
+  // Inside the first cell, in document coordinates.
+  const cell = await page.evaluate(() => {
+    const c = window.__btm;
+    const canvas = c.getCanvas()!;
+    const table = canvas
+      .getObjects()
+      .find((o) => (o as { appType?: string }).appType === "table") as
+      | {
+          left?: number;
+          top?: number;
+          padding?: number;
+          colWidths: number[];
+          rowHeights: number[];
+        }
+      | undefined;
+    if (!table) return null;
+    const r = canvas.upperCanvasEl.getBoundingClientRect();
+    const s = c.getSnapshot();
+    const zoom = canvas.getZoom();
+    const pad = table.padding ?? 0;
+    const cx = (table.left ?? 0) + pad + (table.colWidths[0] ?? 0) / 2;
+    const cy = (table.top ?? 0) + pad + (table.rowHeights[0] ?? 0) / 2;
+    return {
+      x: r.left + s.tx + cx * zoom,
+      y: r.top + s.ty + cy * zoom,
+    };
+  });
+  expect(cell).not.toBeNull();
+
+  await page.mouse.dblclick(cell!.x, cell!.y);
+  await page.waitForTimeout(300);
+
+  // The inline editor is the only textarea the fill stage mounts over canvas.
+  const editor = page.locator("canvas.upper-canvas ~ textarea, textarea.fixed");
+  await expect(editor).toBeVisible();
+
+  await editor.fill("Edited in place");
+  await page.waitForTimeout(200);
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(300);
+
+  // The edit reached the document rather than only the overlay.
+  const cellText = await page.evaluate(() => {
+    const table = window.__btm
+      .getCanvas()!
+      .getObjects()
+      .find((o) => (o as { appType?: string }).appType === "table") as
+      | { cells?: Array<{ text: string }> }
+      | undefined;
+    return table?.cells?.[0]?.text ?? "";
+  });
+  expect(cellText).toBe("Edited in place");
+});
+
+/** Fills the table dialog's rows and columns inputs. */
+async function rowsInputUpdate(
+  page: import("@playwright/test").Page,
+  dialog: import("@playwright/test").Locator,
+  rows: string,
+  columns: string,
+): Promise<void> {
+  const rowsInput = dialog.locator('input[type="number"]').first();
+  await rowsInput.click();
+  await rowsInput.press("Control+a");
+  await rowsInput.type(rows);
+  const colsInput = dialog.locator('input[type="number"]').nth(1);
+  await colsInput.click();
+  await colsInput.press("Control+a");
+  await colsInput.type(columns);
+}

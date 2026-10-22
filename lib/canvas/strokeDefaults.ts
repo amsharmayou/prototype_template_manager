@@ -85,11 +85,13 @@ export function usesDefaultStroke(obj: {
  * Give an outline object the floor at the current zoom, without touching the
  * width it stores.
  *
- * Fabric has no "minimum rendered stroke" option: `strokeUniform` is the only
- * related flag and it makes the stroke *screen*-constant instead, which is a
- * different behaviour and also stops the width scaling with the page. So the
- * floor is applied by overriding the object's render, where the context is
- * already scaled by the viewport.
+ * Fabric has no "minimum rendered stroke" option, so the floor is applied by
+ * overriding the object's render, where the context is already scaled by the
+ * viewport. The render override also divides by the object's scale
+ * (`strokeUniform`), because without it Fabric multiplies the painted width by
+ * `scaleX`/`scaleY`: stretching a shape to fit the reference would thicken its
+ * outline instead of just growing it. With the flag the width stays in document
+ * units, so it still scales with the page but never with the object.
  *
  * `objectCaching` has to be off, because a cached object renders once into an
  * offscreen canvas and would keep the width it was cached at instead of picking
@@ -114,7 +116,7 @@ export function applyStrokeFloor(
   };
   if (target.__strokeFloorInstalled || typeof target._render !== "function") return;
   target.__strokeFloorInstalled = true;
-  target.set?.({ objectCaching: false } as never);
+  target.set?.({ objectCaching: false, strokeUniform: true } as never);
 
   const inner = target._render.bind(obj) as (ctx: CanvasRenderingContext2D) => void;
   target._render = (ctx: CanvasRenderingContext2D): void => {

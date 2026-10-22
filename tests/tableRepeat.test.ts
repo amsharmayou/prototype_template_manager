@@ -19,6 +19,10 @@ describe("normaliseRepeat", () => {
     ).toMatchObject({ maxItems: 5, repeatHeader: true });
   });
 
+  it("bounds direct editor updates to the supported 200 row maximum", () => {
+    expect(normaliseRepeat({ startRow: 0, endRow: 0, key: "items", maxItems: 1000 }, 1)?.maxItems).toBe(200);
+  });
+
   it("trims the key", () => {
     expect(normaliseRepeat({ startRow: 1, endRow: 1, key: "  items  " }, 4)?.key).toBe("items");
   });

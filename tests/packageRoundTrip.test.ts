@@ -305,6 +305,36 @@ describe("package round-trip", () => {
     expect(buildPackage(t).manifest.fields.map((f) => f.key)).toContain("customer_name");
   });
 
+  it("carries field defaults and validation rules into the mobile manifest", () => {
+    const t = base();
+    t.objects = [{
+      ...base().objects[0],
+      type: "text",
+      src: undefined,
+      text: "{{invoice_total}}",
+      fontFamily: "Arial",
+      fontSize: 12,
+      fontWeight: "normal",
+      fontStyle: "normal",
+      textAlign: "left",
+      lineHeight: 14,
+      charSpacing: 0,
+      roleKind: "variable",
+      textVerticalAlign: "top",
+    } as never];
+    t.meta.placeholders = [{
+      key: "invoice_total",
+      type: "currency",
+      required: true,
+      defaultValue: "125.00",
+      min: 0,
+      max: 5000,
+    }];
+
+    expect(buildPackage(t).manifest.fields.find((field) => field.key === "invoice_total"))
+      .toMatchObject({ type: "currency", required: true, defaultValue: "125.00", min: 0, max: 5000 });
+  });
+
   it("refuses to parse bytes that are not a zip", () => {
     expect(() => parsePackage(new TextEncoder().encode("not a zip"))).toThrow();
   });

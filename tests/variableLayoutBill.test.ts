@@ -108,8 +108,22 @@ describe("a long value grows the bill", () => {
     expect(outer.y).toBeCloseTo(138.61, 5);
   });
 
-  it("leaves the row below alone: no rule says it should move", () => {
-    for (const id of ["rect_97e4jyr", "rect_apph1si", "rect_cftyhvr", "rect_dxwbbeq"]) {
+  it("carries the attached rows down with the guide, keeping their distance", () => {
+    // Rectangle 2 and Rectangle 3 are bound to guide-1 by their top edge, so
+    // the boundary carries them. The distance the author drew from the line is
+    // part of the design: they move down by exactly the boundary's travel and
+    // are never yanked *up* onto it.
+    const travel = Math.max(0, field.y + field.height - GUIDE_BASE);
+    expect(travel).toBeGreaterThan(0);
+    for (const id of ["rect_97e4jyr", "rect_apph1si"]) {
+      const authored = box(template().objects, id);
+      expect(box(out.objects, id).y).toBeCloseTo(authored.y + travel, 5);
+      expect(box(out.objects, id).height).toBeCloseTo(authored.height, 5);
+    }
+  });
+
+  it("leaves the rows nothing is attached to exactly as authored", () => {
+    for (const id of ["rect_cftyhvr", "rect_dxwbbeq"]) {
       expect(box(out.objects, id).y).toBeCloseTo(
         box(template().objects, id).y,
         5,

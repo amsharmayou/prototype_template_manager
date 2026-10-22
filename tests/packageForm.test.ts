@@ -125,6 +125,21 @@ describe("deriveForm", () => {
     expect(f.fields[0]).toMatchObject({ required: true, pattern: "^[0-9]{15}$", maxLength: 15 });
   });
 
+  it("carries defaults through to a host-generated form", () => {
+    const form = deriveForm(base({
+      fields: [{
+        key: "invoice_no",
+        label: "Invoice number",
+        type: "text",
+        source: "text",
+        objectName: "Header",
+        defaultValue: "INV-0001",
+      }],
+    }));
+
+    expect(form.fields[0]?.defaultValue).toBe("INV-0001");
+  });
+
   it("discovers a repeating group from the template's band", () => {
     expect(deriveForm(base(), withBand()).repeats).toEqual([
       { key: "items", objectName: "Items", columns: ["description", "amount"], maxItems: 30 },

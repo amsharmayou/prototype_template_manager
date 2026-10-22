@@ -192,8 +192,10 @@ function CellEditor({
 }) {
   const state = controller.getSnapshot();
   const canvas = controller.getCanvas();
-  const table = controller.getTable();
   const editing = state.editingCell;
+  // The table the cell belongs to. Resolving "the first table on the canvas"
+  // instead put the editor over the wrong table as soon as a page carried two.
+  const table = editing ? controller.getTableById(editing.tableId) : null;
   if (!editing || !table) return null;
 
   const cols = table.columns;

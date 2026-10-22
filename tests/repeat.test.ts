@@ -108,6 +108,42 @@ describe("expandRepeats", () => {
     expect(warnings).toEqual([]);
   });
 
+  /**
+   * `repeatHeader` asks for the header to be drawn again when a table splits
+   * across pages. A single-page document never splits, so the flag can do
+   * nothing here - and doing nothing quietly leaves an author believing their
+   * column headings will follow a long line-item table onto page two.
+   */
+  it("says so when repeatHeader cannot be honoured on a single page", () => {
+    const { warnings } = expandRepeats(
+      [table({ repeat: { startRow: 1, endRow: 1, key: "items", repeatHeader: true, maxItems: 100 } })],
+      twoItems,
+      1123,
+    );
+
+    expect(warnings.join(" ")).toContain("repeatHeader");
+  });
+
+  it("stays silent about repeatHeader when it was not asked for", () => {
+    const { warnings } = expandRepeats([table()], twoItems, 1123);
+
+    expect(warnings.join(" ")).not.toContain("repeatHeader");
+  });
+
+  /**
+   * A band that starts on the header row clones the header once per item, so
+   * the column headings are repeated down the table.
+   */
+  it("reports a band that swallows the header row", () => {
+    const { warnings } = expandRepeats(
+      [table({ repeat: { startRow: 0, endRow: 0, key: "items", maxItems: 100 } })],
+      twoItems,
+      1123,
+    );
+
+    expect(warnings.join(" ")).toContain("header row");
+  });
+
   it("stays silent when the band key is absent", () => {
     const { objects, warnings } = expandRepeats([table()], v({}), 1123);
     expect((objects[0] as TableObject).rows).toBe(2);

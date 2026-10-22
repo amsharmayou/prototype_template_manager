@@ -35,6 +35,37 @@ const boxOf = (objects: TemplateObject[], id: string) => {
 };
 const GROW_Y: ObjectExpansion = { x: { mode: "fixed" }, y: { mode: "unbounded", strategy: "wrap" } };
 
+describe("a shape expanded from its guide never shrinks", () => {
+  it("keeps its authored edge until the boundary passes it", () => {
+    const objects = [
+        rect("frame", 10, 100, 200, 40, {
+          expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", growthGuideId: "g" } },
+        }),
+        text("field", 20, 80, 100, 20, {
+          expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", growthGuideId: "g" } },
+        }),
+      ] as TemplateObject[];
+    const out = run({
+      objects,
+      measurements: { field: needs(80, 40) },
+      guides: [{ id: "g", orientation: "horizontal", position: 110 }],
+    });
+
+    // The frame's bottom is 30px beyond the base guide. The boundary has moved
+    // only 10px and has not reached the far edge, so it cannot shrink the frame.
+    expect(out.guides[0]!.position).toBe(120);
+    expect(boxOf(out.objects, "frame")).toEqual({ x: 10, y: 100, width: 200, height: 40 });
+
+    const crossing = run({
+      objects,
+      measurements: { field: needs(80, 80) },
+      guides: [{ id: "g", orientation: "horizontal", position: 110 }],
+    });
+    expect(crossing.guides[0]!.position).toBe(160);
+    expect(boxOf(crossing.objects, "frame")).toEqual({ x: 10, y: 100, width: 200, height: 60 });
+  });
+});
+
 describe("explicit container membership", () => {
   it("grows an enabled container around its declared child, keeping padding", () => {
     const out = run({
@@ -316,5 +347,153 @@ describe("hierarchy validation", () => {
     ]) as never);
     expect(issues.some((i: { path: string }) => i.path.includes("anchor"))).toBe(true);
     expect(issues.some((i: { path: string }) => i.path.includes("collision"))).toBe(true);
+  });
+});
+
+/**
+ * A boundary a box is bound to must carry that box, not pull it onto itself.
+ *
+ * `move` is the whole of what a `move` attachment means, and a box whose edge
+ * was drawn *clear* of the line - above or below it - keeps the distance the
+ * author drew. The old predicate compared the edge against the boundary's
+ * *moved* position with a one-sided tolerance, so the moment the boundary
+ * travelled a sub-pixel every box sitting below it was yanked up onto the
+ * line, losing its drawn margin, and jumped back down again once the line
+ * finally passed it. Both cases here are the same shape of template with the
+ * edge on either side of the line, and both must keep their offset.
+ */
+describe("a box drawn clear of a boundary keeps its distance", () => {
+  it("keeps a margin below the line and moves down by the travel", () => {
+    const out = run({
+      objects: [
+        text("t1", 10, 10, 100, 20, { expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", strategy: "wrap", growthGuideId: "g" } } }),
+        rect("row", 10, 100, 200, 40, { /* top edge is 30 below the line */ }),
+      ],
+      measurements: { t1: needs(80, 150) },
+      guides: [{ id: "g", orientation: "horizontal", position: 70 }],
+      attachments: [{ id: "m", objectId: "row", edge: "top", guideId: "g", behavior: "move" }],
+    });
+
+    // The field's bottom is 160, so the boundary travels 70 -> 160.
+    const travel = 90;
+    const row = boxOf(out.objects, "row");
+    expect(row.y).toBeCloseTo(100 + travel, 5);
+    expect(row.height).toBe(40);
+  });
+
+  it("keeps a margin above the line too", () => {
+    // The edge sits 15px *above* the line. A `move` attachment carries the whole
+    // object, so the box travels with the boundary and keeps that 15px - the
+    // mirror of the case below, and never a no-op.
+    const out = run({
+      objects: [
+        text("t1", 10, 10, 100, 20, { expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", strategy: "wrap", growthGuideId: "g" } } }),
+        rect("row", 10, 10, 200, 40, { /* bottom edge is 15 above the line */ }),
+      ],
+      measurements: { t1: needs(80, 150) },
+      guides: [{ id: "g", orientation: "horizontal", position: 65 }],
+      attachments: [{ id: "m", objectId: "row", edge: "bottom", guideId: "g", behavior: "move" as const }],
+    });
+
+    const row = boxOf(out.objects, "row");
+    // The field's bottom is 160, so the boundary travels 65 -> 160 (95).
+    expect(row.y).toBeCloseTo(10 + 95, 5);
+    expect(row.height).toBe(40);
+    expect(row.y + row.height).toBeCloseTo(160 - 15, 5);
+  });
+
+  it("carries an object bound by its far edge instead of teleporting it", () => {
+    // The answer is a coordinate of the *edge*, not the origin, so the origin is
+    // the far edge back by the size. Assigning the edge to the origin moved the
+    // box by a whole height - one render of this case put it 95px down the page.
+    const out = run({
+      objects: [
+        text("t1", 10, 10, 100, 20, { expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", strategy: "wrap", growthGuideId: "g" } } }),
+        rect("row", 10, 300, 200, 40, { /* bottom edge is 55 above the line */ }),
+      ],
+      // The field's bottom is 460, so the boundary travels 395 -> 460 (65).
+      measurements: { t1: needs(80, 450) },
+      guides: [{ id: "g", orientation: "horizontal", position: 395 }],
+      attachments: [{ id: "m", objectId: "row", edge: "bottom", guideId: "g", behavior: "move" as const }],
+    });
+
+    const row = boxOf(out.objects, "row");
+    // Bottom edge 340 + travel 65 = 405; the origin follows 65px down to 365.
+    expect(row.y + row.height).toBeCloseTo(405, 5);
+    expect(row.y).toBeCloseTo(365, 5);
+    expect(row.height).toBe(40);
+  });
+
+  it("does not walk a box that was already carried onto the line", () => {
+    // The steady state: an edge drawn on the line, carried once, then re-solved
+    // with the boundary already where it ended up.
+    const guides = [{ id: "g", orientation: "horizontal", position: 70 }] as const;
+    const attachments = [{ id: "m", objectId: "row", edge: "top" as const, guideId: "g", behavior: "move" as const }];
+    const objects = [
+      text("t1", 10, 10, 100, 20, { expansion: { x: { mode: "fixed" }, y: { mode: "unbounded", strategy: "wrap", growthGuideId: "g" } } }),
+      rect("row", 10, 70, 200, 40),
+    ];
+    const first = run({ objects, measurements: { t1: needs(80, 150) }, guides: [...guides], attachments });
+    const second = run({
+      objects: first.objects,
+      measurements: { t1: needs(80, 150) },
+      guides: [...first.guides],
+      attachments,
+    });
+
+    expect(boxOf(first.objects, "row").y).toBeCloseTo(160, 5);
+    expect(boxOf(second.objects, "row").y).toBeCloseTo(boxOf(first.objects, "row").y, 5);
+  });
+});
+
+/**
+ * A frame that is bound to a boundary is still a frame around its contents.
+ *
+ * A guide attachment on an edge pins that edge; it does not release the frame
+ * from containing what it already contains. Suppressing containment because an
+ * edge happened to be attached froze the frame at its traced height while the
+ * field inside it grew unchecked, so the authored gap closed before the frame
+ * reacted at all. The two rules reconcile by taking whichever edge is further
+ * out, which is what `max` gives.
+ */
+describe("a frame keeps its gap to a child while bound to a boundary", () => {
+  it("grows to contain the child plus the authored slack, not past the guide", () => {
+    const out = run({
+      objects: [
+        rect("frame", 10, 10, 200, 100, {
+          // The legacy path: a policy, but no explicit container membership.
+          expansion: { x: { mode: "fixed" }, y: { mode: "unbounded" } },
+        }),
+        text("t1", 15, 15, 100, 20, { expansion: GROW_Y }),
+      ],
+      // Authored: frame bottom 110, field bottom 35 - 75px of traced slack.
+      measurements: { t1: needs(80, 200) },
+      guides: [{ id: "g", orientation: "horizontal", position: 40 }],
+      attachments: [{ id: "s", objectId: "frame", edge: "bottom", guideId: "g", behavior: "stretch" }],
+    });
+
+    const frame = boxOf(out.objects, "frame");
+    // The field needs its bottom at 215; the frame keeps its 75px gap.
+    expect(frame.y + frame.height).toBeCloseTo(215 + 75, 5);
+    expect(frame.height).toBeGreaterThan(100);
+  });
+
+  it("still defers to the guide when the guide is the nearer boundary", () => {
+    const out = run({
+      objects: [
+        rect("frame", 10, 10, 200, 100, { expansion: { x: { mode: "fixed" }, y: { mode: "unbounded" } } }),
+        text("t1", 15, 15, 100, 20, { expansion: GROW_Y }),
+      ],
+      // Only slightly taller than traced, so containment asks for less than the
+      // boundary, which is itself pushed far past the frame by its own field.
+      measurements: { t1: needs(80, 30), t2: needs(80, 400) },
+      guides: [{ id: "g", orientation: "horizontal", position: 40 }],
+      attachments: [{ id: "s", objectId: "frame", edge: "bottom", guideId: "g", behavior: "stretch" }],
+    });
+
+    expect(out.guides[0]!.position).toBeGreaterThan(0);
+    expect(boxOf(out.objects, "frame").y + boxOf(out.objects, "frame").height).toBeGreaterThanOrEqual(
+      out.guides[0]!.position,
+    );
   });
 });

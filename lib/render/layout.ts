@@ -488,9 +488,19 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
     contentEdge: number,
     cap: number,
   ) => {
-    // Authored on the guide: the edge is the boundary, now and after it moves.
-    const drawnOnGuide = travel > TOLERANCE && at - authoredEdge <= TOLERANCE;
-    const followed = drawnOnGuide ? at : authoredEdge + travel;
+    // Keep the offset when the boundary starts beyond this edge. If the
+    // boundary starts inside the box, hold the authored edge until it catches
+    // up, then follow it. Comparing against the authored guide position avoids
+    // the old one-sided current-position check, which shrank boxes and jumped
+    // them when the boundary crossed an edge.
+    const guideBase = at - travel;
+    const edgeOnGuide = Math.abs(authoredEdge - guideBase) <= TOLERANCE;
+    const guideStartsBeyondEdge = authoredEdge < guideBase - TOLERANCE;
+    const followed = edgeOnGuide
+      ? at
+      : guideStartsBeyondEdge
+        ? authoredEdge + travel
+        : Math.max(authoredEdge, at);
     const want = Math.min(Math.max(followed, contentEdge), cap);
     if (axis === "y") {
       box.height = Math.max(0, want - box.y);
@@ -505,12 +515,47 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
    * The same drawn-on-the-line rule as [placeEdge], read as a translation, so
    * the opposite edge comes along and a row of boxes below a moving line shifts
    * by exactly the line's displacement.
+   *
+   * "Carrying" is the whole of what `move` means, so the offset is preserved
+   * from the boundary rather than onto it: a box whose edge is drawn *clear* of
+   * the line - above or below it - keeps the distance the author drew, which is
+   * what `authoredEdge + travel` expresses. A box drawn *on* the line belongs
+   * to it and travels with it, which the same formula reaches via
+   * `authoredEdge == guideBase`.
+   *
+   * Comparing the edge against the boundary's **base** rather than against its
+   * **current** position is what distinguishes the two: `at - authoredEdge` is
+   * already negative for a box drawn below the line, so an unguarded `<=`
+   * reads every such box as "on the line" and carries it *up* onto the boundary
+   * the moment the boundary moves a sub-pixel. A second clause keeps the steady
+   * state a fixed point: once a box has been carried to the boundary, its edge
+   * sits at it, and re-solving it there must not carry it a second time.
+   *
+   * `atFarEdge` says which edge the attachment binds, because it decides what
+   * the result is a coordinate of. A `top`/`left` attachment carries the
+   * object's origin, so the answer *is* the origin; a `bottom`/`right` one
+   * carries the far edge, so the origin is the far edge back by the size.
+   * Without that, attaching a box by its bottom edge assigned the *bottom*
+   * coordinate to its *top* and teleported it.
    */
-  const carryTo = (box: Box, axis: "x" | "y", at: number, travel: number, authoredEdge: number) => {
-    const drawnOnGuide = travel > TOLERANCE && at - authoredEdge <= TOLERANCE;
+  const carryTo = (
+    box: Box,
+    axis: "x" | "y",
+    at: number,
+    travel: number,
+    authoredEdge: number,
+    atFarEdge: boolean,
+  ) => {
+    const guideBase = at - travel;
+    const drawnOnGuide =
+      Math.abs(authoredEdge - guideBase) <= TOLERANCE ||
+      Math.abs(authoredEdge - at) <= TOLERANCE;
     const want = drawnOnGuide ? at : authoredEdge + travel;
-    if (axis === "y") box.y = want;
-    else box.x = want;
+    if (axis === "y") {
+      box.y = atFarEdge ? want - box.height : want;
+    } else {
+      box.x = atFarEdge ? want - box.width : want;
+    }
   };
 
   /** A ceiling on how far an object's own policy lets it grow past its base. */
@@ -567,6 +612,8 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
     // The box came from `input.objects`, so the object it names is there.
     const cap = growthCap(byId.get(a.objectId)!, axis, box);
     const travel = Math.max(0, at - g.base);
+    // Which edge the attachment binds decides what the carried coordinate means.
+    const atFarEdge = a.edge === "bottom" || a.edge === "right";
 
     if (twin) {
       // Both edges on one boundary is a contradiction resolved by carrying the
@@ -576,22 +623,22 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
       note(
         `"${a.objectId}" has both ${opposite} and ${a.edge} attached to guide "${a.guideId}"; one box cannot have both edges on one boundary, so it follows the boundary instead`,
       );
-      carryTo(box, axis, at, travel, authoredEdge);
+      carryTo(box, axis, at, travel, authoredEdge, atFarEdge);
       continue;
     }
 
     if (a.behavior === "move") {
-      carryTo(box, axis, at, travel, authoredEdge);
+      carryTo(box, axis, at, travel, authoredEdge, atFarEdge);
       continue;
     }
 
-    if (a.edge === "bottom" || a.edge === "right") {
+    if (atFarEdge) {
       placeEdge(box, axis, at, travel, authoredEdge, contentEdge, cap);
     } else {
       // A top/left edge can only be carried by a boundary that moves down and
       // rightward: holding the opposite edge would squeeze the box, so the
       // attachment behaves as a follow.
-      carryTo(box, axis, at, travel, authoredEdge);
+      carryTo(box, axis, at, travel, authoredEdge, atFarEdge);
     }
   }
 
@@ -644,15 +691,18 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
   // authored padding. A plain rectangle stays decoration. Anchors then resolve
   // inside the grown parent; collisions are reported, never auto-pushed.
   if (!cyclic) {
+    // An axis is only "already governed by a boundary" when this shape's own
+    // *expansion* ties an edge to a live guide - which is the pass above that
+    // moves the edge itself. An attachment is not one of those: it pins an edge
+    // to the boundary but leaves the box free to grow around its contents, and
+    // treating it as "already governed" is what froze a frame at its traced
+    // height while the field inside it grew on unchecked.
     const linked = new Map<string, { y: boolean; x: boolean }>();
     for (const o of input.objects) {
       const p = policyOf(o);
-      const onY = p?.y.growthGuideId !== undefined;
-      const onX = p?.x.growthGuideId !== undefined;
-      const edges = byObject.get(o.id) ?? [];
       linked.set(o.id, {
-        y: onY || edges.some((a) => a.edge === "top" || a.edge === "bottom"),
-        x: onX || edges.some((a) => a.edge === "left" || a.edge === "right"),
+        y: p?.y.growthGuideId !== undefined && guides.has(p.y.growthGuideId),
+        x: p?.x.growthGuideId !== undefined && guides.has(p.x.growthGuideId),
       });
     }
 
@@ -699,14 +749,13 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
         const baseBox = base.get(o.id)!;
         const policy = containerOf(o)!;
         const pad = paddingOf(policy);
-        const links = linked.get(o.id)!;
         const members = (childrenOf.get(o.id) ?? [])
           .map((id) => byId.get(id)!)
           .filter(Boolean);
         for (const axis of ["y", "x"] as const) {
           const growth = axis === "y" ? policy.growthY ?? "content" : policy.growthX ?? "content";
           if (growth !== "content") continue;
-          if (links[axis]) continue;
+          if (linked.get(o.id)![axis]) continue;
           const horizontal = axis === "y";
           const origin = horizontal ? baseBox.y : baseBox.x;
           const baseFar = horizontal ? baseBox.y + baseBox.height : baseBox.x + baseBox.width;
@@ -775,10 +824,9 @@ export function calculateLayout(input: LayoutInput): LayoutOutput {
         const box = placed.get(o.id)!;
         const authored = base.get(o.id)!;
         const p = policyOf(o)!;
-        const links = linked.get(o.id)!;
         for (const axis of ["y", "x"] as const) {
           if (p[axis].mode === "fixed") continue;
-          if (links[axis]) continue;
+          if (linked.get(o.id)![axis]) continue;
           const horizontal = axis === "y";
           const inside = input.objects.filter((c) => c.id !== o.id && contains(authored, base.get(c.id)!));
           let need = horizontal ? box.y + box.height : box.x + box.width;

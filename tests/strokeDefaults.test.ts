@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_STROKE_WIDTH,
   MIN_STROKE_DEVICE_PX,
+  applyStrokeFloor,
   renderedStrokeWidth,
   usesDefaultStroke,
 } from "@/lib/canvas/strokeDefaults";
@@ -87,5 +88,23 @@ describe("DEFAULT_STROKE_WIDTH", () => {
     const painted = renderedStrokeWidth(DEFAULT_STROKE_WIDTH, 0.25);
     expect(painted).toBe(MIN_STROKE_DEVICE_PX / 0.25);
     expect(painted * 0.25).toBeCloseTo(MIN_STROKE_DEVICE_PX, 10);
+  });
+});
+
+describe("applyStrokeFloor", () => {
+  it("marks outline objects for stretch-proof, uncached painting", () => {
+    // Without strokeUniform Fabric multiplies the painted stroke by the
+    // object's scaleX/scaleY, so a stretched shape thickens instead of merely
+    // growing. The floor override only works on an object that paints fresh
+    // each frame, which is why objectCaching has to be off as well.
+    const obj = {
+      strokeWidth: 1.5,
+      _render(): void {},
+      set(patch: Record<string, unknown>): void {
+        Object.assign(obj, patch);
+      },
+    };
+    applyStrokeFloor(obj as never, () => 1);
+    expect(obj).toMatchObject({ objectCaching: false, strokeUniform: true });
   });
 });

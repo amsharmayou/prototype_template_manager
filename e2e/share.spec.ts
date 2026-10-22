@@ -236,7 +236,7 @@ test.describe("Sharing a template out of the editor", () => {
 
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("button", { name: "Share as .html" }).click(),
+      page.getByRole("button", { name: "Share", exact: true }).click(),
     ]);
     expect(download.suggestedFilename()).toMatch(/\.html$/);
 
@@ -254,7 +254,7 @@ test.describe("Sharing a template out of the editor", () => {
     await loadEditorTemplate(page);
     const [download] = await Promise.all([
       page.waitForEvent("download"),
-      page.getByRole("button", { name: "Share as .html" }).click(),
+      page.getByRole("button", { name: "Share", exact: true }).click(),
     ]);
     const saved = join(tmpdir(), "btm-downloaded-share.html");
     await download.saveAs(saved);

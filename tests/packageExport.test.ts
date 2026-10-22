@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { blockingIssues, buildPackageBytes, describeIssues, packageFilename } from "@/lib/export/toPackage";
 import { computedSpecsFor } from "@/lib/package/computedSpecs";
+import { parseTemplate } from "@/lib/template/parse";
 import { parsePackage } from "@/lib/package/parse";
 import type { BillTemplate, TableCell, TableObject } from "@/lib/template/types";
 import { unzipSync, strFromU8 } from "fflate";
@@ -132,6 +133,65 @@ describe("computedSpecsFor", () => {
 
     expect(specs.map((s) => s.key)).toEqual(["subtotal", "total"]);
     expect(specs[0]!.args).toEqual(["items.amount", "extras.amount"]);
+  });
+
+  it("uses explicitly configured calculations to define tax and final total", () => {
+    const template = bandedTemplate();
+    template.meta.computed = [
+      { key: "tax_amount", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+      { key: "total", op: "add", args: ["subtotal", "tax_amount"] },
+    ];
+
+    expect(computedSpecsFor(template)).toEqual([
+      { key: "subtotal", op: "sum", args: ["items.amount"] },
+      { key: "tax_amount", op: "percent", args: ["subtotal"], rateKey: "tax_rate" },
+      { key: "total", op: "add", args: ["subtotal", "tax_amount"] },
+    ]);
+    expect(parseTemplate(template).meta.computed).toEqual(template.meta.computed);
+  });
+
+  /**
+   * A band whose money column is not called `amount`.
+   *
+   * The subtotal used to read `<band>.amount` whatever the band declared, so a
+   * band keyed on `line_total` produced an arg pointing at a column that does
+   * not exist - and `validateManifest` refuses such an arg, which broke the
+   * export button on exactly the bills that renamed their column.
+   */
+  it("sums the money column a band actually declares", () => {
+    const template = bandedTemplate();
+    const table = template.objects.find((o) => o.type === "table") as TableObject;
+    const cells = table.cells.map((c) => ({
+      ...c,
+      text: c.text.replace("{{amount}}", "{{line_total}}"),
+    }));
+    const renamed: BillTemplate = {
+      ...template,
+      objects: template.objects.map((o) => (o.type === "table" ? { ...table, cells } : o)),
+    };
+
+    const specs = computedSpecsFor(renamed);
+
+    expect(specs[0]).toEqual({ key: "subtotal", op: "sum", args: ["items.line_total"] });
+  });
+
+  it("does not read a column the band never declared", () => {
+    const template = bandedTemplate();
+    const table = template.objects.find((o) => o.type === "table") as TableObject;
+    const cells = table.cells.map((c) => ({
+      ...c,
+      text: c.text.replace("{{amount}}", "{{line_total}}"),
+    }));
+    const renamed: BillTemplate = {
+      ...template,
+      objects: template.objects.map((o) => (o.type === "table" ? { ...table, cells } : o)),
+    };
+
+    const specs = computedSpecsFor(renamed);
+
+    // The old hardcoded arg would leave a reference to a column no host can
+    // offer an input for, which is what made the exported package invalid.
+    expect(specs[0]!.args).not.toContain("items.amount");
   });
 });
 

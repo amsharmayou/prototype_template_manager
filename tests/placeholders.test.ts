@@ -5,6 +5,7 @@ import {
   collectDocumentVariables,
   extractVariables,
   hasVariable,
+  isDataFieldObject,
   SUGGESTED_VARIABLES,
   toToken,
 } from "@/lib/template/placeholders";
@@ -83,5 +84,18 @@ describe("collectDocumentVariables", () => {
         "static",
       ]),
     ).toEqual(["customer_name", "total"]);
+  });
+});
+
+describe("isDataFieldObject", () => {
+  it("counts a drawn data-field box", () => {
+    expect(isDataFieldObject({ appType: "field" })).toBe(true);
+  });
+
+  it("ignores text, image slots, tables and empty objects", () => {
+    expect(isDataFieldObject({ appType: "text" })).toBe(false);
+    expect(isDataFieldObject({ appType: "image-placeholder" })).toBe(false);
+    expect(isDataFieldObject({ appType: "table" })).toBe(false);
+    expect(isDataFieldObject({})).toBe(false);
   });
 });

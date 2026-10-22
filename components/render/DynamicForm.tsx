@@ -6,6 +6,7 @@ import type { TemplateField } from "@/lib/template/dataBinding";
 import type { FormSchema } from "@/lib/package/form";
 import { repeatValue, rowsFromValue } from "@/lib/render/repeatForm";
 import { CHECKED_MARK, TICKMARK_OPTIONS } from "@/lib/share/kit";
+import { readImageFile } from "@/lib/client/readImageFile";
 
 /**
  * A form generated from the template's own dynamic slots: one input per
@@ -17,11 +18,13 @@ export default function DynamicForm({
   values,
   onChange,
   schema,
+  onError,
 }: {
   fields: TemplateField[];
   values: Readonly<Record<string, string>>;
   onChange: (key: string, value: string) => void;
   schema?: FormSchema;
+  onError?: (message: string) => void;
 }) {
   const groups: Array<{ title: string; items: TemplateField[] }> = [
     { title: "Text fields", items: fields.filter((f) => f.source === "text" || f.source === "field") },
@@ -45,6 +48,11 @@ export default function DynamicForm({
                 onChange(field.key, repeatValue(next, repeat.columns));
               return (
                 <div className="flex flex-col gap-1">
+                  {rows.length > repeat.maxItems ? (
+                    <p role="status" className="text-[11px] text-amber-800">
+                      This answer has {rows.length} rows. Only the first {repeat.maxItems} will print; remove extra rows to keep the saved answer within the template limit.
+                    </p>
+                  ) : null}
                   {rows.map((row, i) => (
                     <div key={i} className="flex gap-2">
                       {repeat.columns.map((col) => (
@@ -96,6 +104,7 @@ export default function DynamicForm({
                   field={field}
                   value={values[field.key] ?? ""}
                   onChange={onChange}
+                  onError={onError}
                 />
               ))}
             </div>
@@ -113,10 +122,12 @@ function FieldRow({
   field,
   value,
   onChange,
+  onError,
 }: {
   field: TemplateField;
   value: string;
   onChange: (key: string, value: string) => void;
+  onError?: (message: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
@@ -129,16 +140,17 @@ function FieldRow({
           name={field.key}
           type="file"
           accept="image/png,image/jpeg,image/webp"
+          required={field.required}
           className="block w-full text-[11px] text-neutral-500 file:mr-2 file:rounded file:border-0 file:bg-neutral-100 file:px-2 file:py-1 file:text-[11px] file:text-neutral-600"
           onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = "";
             if (!file) return;
-            const reader = new FileReader();
-            reader.onload = () => {
-              if (typeof reader.result === "string") onChange(field.key, reader.result);
-            };
-            reader.readAsDataURL(file);
+            void readImageFile(file)
+              .then((dataUrl) => onChange(field.key, dataUrl))
+              .catch((error: unknown) => {
+                onError?.(error instanceof Error ? error.message : "Could not read this image.");
+              });
           }}
         />
         {value ? (
@@ -156,6 +168,7 @@ function FieldRow({
       <select
         name={field.key}
         className={inputClass}
+        required={field.required}
         value={value}
         onChange={(e) => onChange(field.key, e.target.value)}
       >
@@ -172,6 +185,7 @@ function FieldRow({
         <input
           type="checkbox"
           name={field.key}
+          required={field.required}
           checked={value === CHECKED_MARK}
           onChange={(e) =>
             onChange(field.key, e.target.checked ? CHECKED_MARK : "")
@@ -187,6 +201,7 @@ function FieldRow({
         type="date"
         name={field.key}
         className={inputClass}
+        required={field.required}
         value={value}
         onChange={(e) => onChange(field.key, e.target.value)}
       />
@@ -198,6 +213,26 @@ function FieldRow({
         name={field.key}
         inputMode="decimal"
         className={inputClass}
+        required={field.required}
+        min={field.min}
+        max={field.max}
+        step="any"
+        value={value}
+        onChange={(e) => onChange(field.key, e.target.value)}
+      />
+    );
+  } else if (field.type === "currency") {
+    input = (
+      <input
+        type="number"
+        name={field.key}
+        inputMode="decimal"
+        step="any"
+        min={field.min}
+        max={field.max}
+        required={field.required}
+        placeholder="0.00"
+        className={inputClass}
         value={value}
         onChange={(e) => onChange(field.key, e.target.value)}
       />
@@ -207,10 +242,11 @@ function FieldRow({
       <input
         type="text"
         name={field.key}
-        placeholder={field.type === "currency" ? "0.00" : field.label}
+        placeholder={field.label}
         className={inputClass}
         value={value}
         maxLength={field.maxLength}
+        required={field.required}
         onChange={(e) => onChange(field.key, e.target.value)}
       />
     );
@@ -231,6 +267,7 @@ function FieldRow({
     <label className="block">
       <span className="block text-[11px] font-medium text-neutral-600">
         {field.label}
+        {field.required ? <span className="ml-1 text-red-600">Required</span> : null}
         {field.label !== field.key ? (
           <span className="ml-1 font-mono text-[10px] text-neutral-400">{field.key}</span>
         ) : null}

@@ -53,6 +53,8 @@ export interface SerialisableObject {
   getScaledWidth?: () => number;
   getScaledHeight?: () => number;
   getCenterPoint?: () => { x: number; y: number };
+  getPositionByOrigin?: (originX: string, originY: string) => { x: number; y: number };
+  getPointByOrigin?: (originX: string, originY: string) => { x: number; y: number };
   getObjects?: () => SerialisableObject[];
   readonly [key: string]: unknown;
 }
@@ -89,6 +91,24 @@ export function objectBox(o: SerialisableObject): {
   // the template's width to 81pt over a save↔reload cycle.
   const w = num(o.width) * num(o.scaleX, 1);
   const h = num(o.height) * num(o.scaleY, 1);
+  // Ask Fabric for the corner itself. `getPositionByOrigin("left","top")` is
+  // the exact inverse of the origin/angle `hydrate` writes, so it is a fixed
+  // point across a save and reload for any stroke, rotation or scale.
+  //
+  // Deriving the corner from `getCenterPoint()` instead mixes two coordinate
+  // systems: that centre is *stroke-inclusive*, so subtracting a
+  // stroke-exclusive half-box left every object `strokeWidth / 2` further right
+  // and down on every save - and the undo snapshot serialises the same way, so
+  // a single undo/redo pair walked the whole bill across the page.
+  const corner = o.getPositionByOrigin?.("left", "top") ?? o.getPointByOrigin?.("left", "top");
+  if (corner) {
+    return {
+      x: Math.round(corner.x * 100) / 100,
+      y: Math.round(corner.y * 100) / 100,
+      width: Math.round(w * 100) / 100,
+      height: Math.round(h * 100) / 100,
+    };
+  }
   const center = o.getCenterPoint?.();
   if (center) {
     return {

@@ -3,6 +3,7 @@
 import {
   ActiveSelection,
   Canvas,
+  Circle,
   Ellipse,
   FabricObject,
   IText,
@@ -19,7 +20,6 @@ import {
 import { BillTable } from "@/lib/canvas/objects/BillTable";
 import {
   GUIDE_APP_TYPE,
-  createGuide,
   guidesFromObjects,
   isGuide,
   nextGuideId,
@@ -62,6 +62,7 @@ import {
   applyStrokeFloor,
   usesDefaultStroke,
 } from "@/lib/canvas/strokeDefaults";
+import { extractVariables, isDataFieldObject } from "@/lib/template/placeholders";
 import {
   acceptsSharedPaint,
   acceptsVisibility,
@@ -72,11 +73,16 @@ import {
 import { createId, registerAppProperties } from "@/lib/canvas/fabricSetup";
 import { HistoryStack } from "@/lib/canvas/history";
 import {
+  buildAdjustedReference,
+  cropForPage,
+  EMPTY_REFERENCE_CROP,
   fitTo,
   install,
   remove,
+  sampleBorderColor,
   setOpacity,
   setVisible,
+  type ReferenceCrop,
   type ReferenceHandle,
 } from "@/lib/canvas/referenceBackground";
 import {
@@ -96,6 +102,7 @@ import { buildPackage, writePackage } from "@/lib/package/build";
 import { parsePackage } from "@/lib/package/parse";
 import { resolvePackage } from "@/lib/package/resolve";
 import { computedSpecsFor } from "@/lib/package/computedSpecs";
+import type { ComputedSpec } from "@/lib/package/format";
 import { renderHtml } from "@/lib/render";
 import type { LayoutGuide } from "@/lib/template/types";
 import { A4_HEIGHT, A4_WIDTH } from "@/lib/template/types";
@@ -164,6 +171,8 @@ export interface EditorState {
   hasReference: boolean;
   referenceVisible: boolean;
   referenceOpacity: number;
+  referenceCrop: ReferenceCrop;
+  referenceRotation: 0 | 90 | 180 | 270;
   referenceName: string;
   gridVisible: boolean;
   snapToGrid: boolean;
@@ -196,8 +205,15 @@ export interface EditorState {
   } | null;
   documentName: string;
   objectCount: number;
+  /**
+   * Traced objects that make the document dynamic: data-field boxes, image
+   * slots and text tokens, plus a repeating band on the selected table. Counted
+   * from the objects themselves, so re-typing a field is an edit, not progress.
+   */
+  dataFieldCount: number;
   /** Per-key contracts for dynamic placeholders, editable in the panel. */
   placeholders: PlaceholderSpec[];
+  computedSpecs: ComputedSpec[];
   /**
    * Variable-layout configuration for the document, or `undefined` for a
    * fixed-layout template.
@@ -269,9 +285,13 @@ export function normalisePlaceholderSpecs(
     const clean: PlaceholderSpec = { key };
     if (spec.label) clean.label = spec.label;
     if (spec.type) clean.type = spec.type;
+    if (typeof spec.required === "boolean") clean.required = spec.required;
+    if (typeof spec.defaultValue === "string") clean.defaultValue = spec.defaultValue;
     if (typeof spec.maxLength === "number" && spec.maxLength > 0) {
       clean.maxLength = spec.maxLength;
     }
+    if (typeof spec.min === "number" && Number.isFinite(spec.min)) clean.min = spec.min;
+    if (typeof spec.max === "number" && Number.isFinite(spec.max)) clean.max = spec.max;
     if (spec.fontFamily) clean.fontFamily = spec.fontFamily;
     if (typeof spec.fontSize === "number" && spec.fontSize > 0) {
       clean.fontSize = spec.fontSize;
@@ -300,6 +320,8 @@ export class EditorController {
     hasReference: false,
     referenceVisible: true,
     referenceOpacity: 0.25,
+    referenceCrop: { ...EMPTY_REFERENCE_CROP },
+    referenceRotation: 0,
     referenceName: "Bill reference",
     gridVisible: false,
     snapToGrid: false,
@@ -311,7 +333,9 @@ export class EditorController {
     pendingTable: null,
     documentName: "Untitled bill template",
     objectCount: 0,
+    dataFieldCount: 0,
     placeholders: [],
+    computedSpecs: [],
     sampledColour: null,
     structureLocked: false,
     groups: [],
@@ -326,6 +350,9 @@ export class EditorController {
   private drawOrigin: { x: number; y: number } | null = null;
   private polygonPoints: Array<{ x: number; y: number }> = [];
   private polygonPreview: Polygon | null = null;
+  /** Vertex dots and the rubber band shown while a polygon is being placed. */
+  private polygonMarkers: FabricObject[] = [];
+  private polygonGuide: Line | null = null;
   private pencil: PencilBrush | null = null;
   /**
    * A rect or rounded rect the current rule drag started inside. When set, the
@@ -423,6 +450,7 @@ export class EditorController {
     this.canvas = canvas;
 
     canvas.on("mouse:down", this.onMouseDown);
+    canvas.on("mouse:dblclick", this.onMouseDblClick);
     canvas.on("mouse:move", this.onMouseMove);
     canvas.on("mouse:up", this.onMouseUp);
     canvas.on("mouse:wheel", this.onWheel);
@@ -463,6 +491,7 @@ export class EditorController {
     const canvas = this.canvas;
     if (canvas) {
       canvas.off("mouse:down", this.onMouseDown);
+      canvas.off("mouse:dblclick", this.onMouseDblClick);
       canvas.off("mouse:move", this.onMouseMove);
       canvas.off("mouse:up", this.onMouseUp);
       canvas.off("mouse:wheel", this.onWheel);
@@ -499,7 +528,7 @@ export class EditorController {
   /* ---------------------------------------------------------------- */
 
   /**
-   * Keep the reference image exactly covering the document.
+   * Keep the full reference image centred on the document without distortion.
    *
    * The image is the authoring underlay, so the canvas and the image must
    * always coincide: the page boundary *is* the image boundary. Whenever the
@@ -515,9 +544,16 @@ export class EditorController {
   setDocument(width: number, height: number): void {
     const canvas = this.canvas;
     if (!canvas) return;
+    if (
+      !Number.isFinite(width) || !Number.isFinite(height) ||
+      width < 100 || height < 100 || width > 20000 || height > 20000
+    ) return;
+    if (width === this.state.document.width && height === this.state.document.height) return;
     this.setState({ document: { width, height } });
     this.lockReferenceToDocument();
     this.applyCanvasSize();
+    this.fit();
+    this.commit("Change page size");
   }
 
   /**
@@ -722,6 +758,8 @@ export class EditorController {
       document: { width: docWidth, height: docHeight },
       hasReference: true,
       referenceVisible: true,
+      referenceCrop: { ...EMPTY_REFERENCE_CROP },
+      referenceRotation: 0,
     });
     fitTo(ref, { width: docWidth, height: docHeight });
     this.applyCanvasSize();
@@ -744,13 +782,68 @@ export class EditorController {
     this.setState({ referenceVisible: visible });
   }
 
+  /** Rotate or crop the reference image only; bill objects and exports are untouched. */
+  async setReferenceAdjustments(
+    crop: ReferenceCrop,
+    rotation: 0 | 90 | 180 | 270,
+  ): Promise<void> {
+    const canvas = this.canvas;
+    const current = this.reference;
+    if (!canvas || !current) return;
+    const next = await buildAdjustedReference(current, crop, rotation, this.state.referenceOpacity);
+    next.image.set({ selectable: false, evented: false } as never);
+    canvas.backgroundImage = this.state.referenceVisible ? next.image : undefined;
+    canvas.backgroundColor = sampleBorderColor(next.image);
+    fitTo(next, this.state.document);
+    canvas.requestRenderAll();
+    current.image.dispose();
+    this.reference = next;
+    this.setState({ referenceCrop: next.crop, referenceRotation: next.rotation });
+  }
+
+  /** Rotate the reference in 90-degree increments without changing its source file. */
+  async rotateReference(direction: "left" | "right"): Promise<void> {
+    const turn = direction === "right" ? 90 : 270;
+    const rotation = ((this.state.referenceRotation + turn) % 360) as 0 | 90 | 180 | 270;
+    await this.setReferenceAdjustments(this.state.referenceCrop, rotation);
+  }
+
+  /** Centre-crop the reference to the current page's aspect ratio. */
+  async fitReferenceToPage(): Promise<void> {
+    const current = this.reference;
+    if (!current) return;
+    const crop = cropForPage(current.sourceWidth, current.sourceHeight, this.state.document, this.state.referenceRotation);
+    await this.setReferenceAdjustments(crop, this.state.referenceRotation);
+  }
+
+  async resetReferenceAdjustments(): Promise<void> {
+    await this.setReferenceAdjustments({ ...EMPTY_REFERENCE_CROP }, 0);
+  }
+
+  /** Focus an editor-only layout guide from a preflight result. */
+  selectGuide(guideId: string): boolean {
+    const canvas = this.canvas;
+    const guide = canvas?.getObjects().find((object) => isGuide(object) && (object as { guideId?: string }).guideId === guideId);
+    if (!canvas || !guide) return false;
+    this.setTool("select");
+    canvas.setActiveObject(guide);
+    canvas.requestRenderAll();
+    this.refresh();
+    return true;
+  }
+
   removeReference(): void {
     const canvas = this.canvas;
     if (!canvas || !this.reference) return;
     this.reference.image.dispose();
     this.reference = null;
     remove(canvas);
-    this.setState({ hasReference: false, referenceVisible: false });
+    this.setState({
+      hasReference: false,
+      referenceVisible: false,
+      referenceCrop: { ...EMPTY_REFERENCE_CROP },
+      referenceRotation: 0,
+    });
     this.refresh();
   }
 
@@ -869,6 +962,28 @@ export class EditorController {
       /* reading pixels can fail in tainted-canvas setups; ignore */
     }
   }
+
+  /**
+   * Double-clicking a table cell opens it for editing in place.
+   *
+   * The inspector has always told the author to "double click a cell on the
+   * canvas to edit it in place", but nothing listened for the double click: the
+   * inline editor was mounted and unreachable. Only the select tool opens a
+   * cell - a double click while drawing must not start editing text, or the
+   * next stroke lands in a textarea.
+   */
+  private onMouseDblClick = (opt: TPointerEventInfo): void => {
+    const table = opt.target;
+    if (!(table instanceof BillTable)) return;
+    if (this.state.tool !== "select") return;
+    if (this.spaceHeld) return;
+
+    const p = opt.scenePoint;
+    const cell = table.cellAtCanvasPoint(p.x, p.y);
+    if (!cell) return;
+
+    this.beginCellEdit(table, cell.row * table.columns + cell.column);
+  };
 
   private onMouseDown = (opt: TPointerEventInfo): void => {
     const canvas = this.canvas;
@@ -1042,6 +1157,8 @@ export class EditorController {
       const dx = p.x - this.drawOrigin.x;
       const dy = p.y - this.drawOrigin.y;
       this.updateDrawing(dx, dy);
+    } else if (this.state.tool === "polygon" && this.polygonPoints.length > 0) {
+      this.updatePolygonGuide(p.x, p.y);
     }
   };
 
@@ -1471,6 +1588,7 @@ export class EditorController {
     const canvas = this.canvas;
     if (!canvas) return;
     this.polygonPoints.push({ x, y });
+    this.addPolygonMarker(x, y);
 
     if (this.polygonPreview) {
       this.polygonPreview.set({ points: [...this.polygonPoints] } as never);
@@ -1504,18 +1622,77 @@ export class EditorController {
       preview.setCoords();
       this.commit("Add polygon");
     }
+    this.clearPolygonMarkers();
     this.polygonPoints = [];
     this.polygonPreview = null;
     this.setTool("select");
   }
 
   cancelPolygon(): void {
+    this.clearPolygonMarkers();
     if (this.polygonPreview) {
       this.canvas?.remove(this.polygonPreview);
       this.polygonPreview = null;
     }
     this.polygonPoints = [];
     this.canvas?.requestRenderAll();
+  }
+
+  /**
+   * The overlays a polygon gesture needs to read as progress: a dot per placed
+   * vertex and a dashed rubber band to the pointer. Without them a single
+   * click draws one invisible point, so the tool looks like it did nothing.
+   */
+  private addPolygonMarker(x: number, y: number): void {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const dot = new Circle({
+      left: x,
+      top: y,
+      radius: 4 / this.state.zoom,
+      originX: "center",
+      originY: "center",
+      fill: "#000000",
+      strokeWidth: 0,
+      selectable: false,
+      evented: false,
+    });
+    dot.set({ appType: POLYGON_MARKER_APP_TYPE } as never);
+    canvas.add(dot);
+    this.polygonMarkers.push(dot);
+  }
+
+  /** Rubber band from the last placed vertex to the pointer. */
+  private updatePolygonGuide(x: number, y: number): void {
+    const canvas = this.canvas;
+    const from = this.polygonPoints[this.polygonPoints.length - 1];
+    if (!canvas || !from) return;
+    if (this.polygonGuide) {
+      this.polygonGuide.set({ x1: from.x, y1: from.y, x2: x, y2: y } as never);
+      this.polygonGuide.setCoords();
+    } else {
+      this.polygonGuide = new Line([from.x, from.y, x, y], {
+        stroke: "#000000",
+        strokeWidth: 1 / this.state.zoom,
+        strokeDashArray: [6 / this.state.zoom, 4 / this.state.zoom],
+        selectable: false,
+        evented: false,
+      });
+      this.polygonGuide.set({ appType: POLYGON_MARKER_APP_TYPE } as never);
+      canvas.add(this.polygonGuide);
+    }
+    canvas.requestRenderAll();
+  }
+
+  private clearPolygonMarkers(): void {
+    const canvas = this.canvas;
+    for (const marker of this.polygonMarkers) canvas?.remove(marker);
+    this.polygonMarkers = [];
+    if (this.polygonGuide) {
+      canvas?.remove(this.polygonGuide);
+      this.polygonGuide = null;
+    }
+    canvas?.requestRenderAll();
   }
 
   get isDrawingPolygon(): boolean {
@@ -1982,7 +2159,7 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
   private tracedObjects(): FabricObject[] {
     const canvas = this.canvas;
     if (!canvas) return [];
-    return canvas.getObjects().filter((o) => !isGuide(o));
+    return canvas.getObjects().filter((o) => !isGuide(o) && !isPolygonMarker(o));
   }
 
   /**
@@ -1993,13 +2170,20 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
   private snapshot(): string {
     const canvas = this.canvas;
     if (!canvas) return "";
+    const template = serialiseObjects(
+      this.tracedObjects() as never,
+      this.state.document,
+      this.state.documentName,
+      this.state.layout,
+    );
+    if (this.state.placeholders.length > 0) {
+      template.meta.placeholders = this.state.placeholders;
+    }
+    if (this.state.computedSpecs.length > 0) {
+      template.meta.computed = this.state.computedSpecs;
+    }
     return JSON.stringify({
-      template: serialiseObjects(
-        this.tracedObjects() as never,
-        this.state.document,
-        this.state.documentName,
-        this.state.layout,
-      ),
+      template,
       groups: this.state.groups,
     });
   }
@@ -2053,6 +2237,8 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
       editingCell: null,
       pendingTable: null,
       document: { ...template.document },
+      placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
+      computedSpecs: Array.isArray(template.meta?.computed) ? template.meta.computed : [],
       groups,
       // The snapshot carries the layout block, so undo and redo restore it
       // along with the geometry. Without this an undo would leave the rules on
@@ -2790,6 +2976,27 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
   }
 
   /**
+   * The table an id names.
+   *
+   * Cell editing addresses a cell by `{ tableId, index }`, so every consumer of
+   * that pair has to resolve the table it belongs to. Taking the *first* table
+   * on the canvas instead would edit the wrong one as soon as a page carried
+   * two tables - and it fails silently, because the text the author typed does
+   * appear, just in the wrong row.
+   */
+  getTableById(tableId: string): BillTable | null {
+    return (
+      this.canvas
+        ?.getObjects()
+        .find(
+          (o): o is BillTable =>
+            (o as unknown as { appType?: string }).appType === "table" &&
+            (o as unknown as { id?: string }).id === tableId,
+        ) ?? null
+    );
+  }
+
+  /**
    * Mutate the document's table through a callback. The properties panel
    * uses this so the canvas object is never mutated directly from React.
    */
@@ -2820,6 +3027,32 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
     target.repeat = next;
     this.commit("Set repeating rows");
     canvas.requestRenderAll();
+  }
+
+  /** Focus the first canvas object containing a dynamic key. */
+  selectDynamicKey(key: string): boolean {
+    const canvas = this.canvas;
+    if (!canvas) return false;
+    const token = new RegExp(`\\{\\{\\s*${escapeRegExp(key)}\\s*\\}\\}`);
+    const target = canvas.getObjects().find((object) => {
+      const type = (object as unknown as { appType?: string }).appType;
+      if (type === "field") return (object as unknown as { key?: string }).key === key;
+      if (type === "text") return token.test(String((object as unknown as { text?: string }).text ?? ""));
+      if (object instanceof BillTable) {
+        for (let row = 0; row < object.rows; row += 1) {
+          for (let column = 0; column < object.columns; column += 1) {
+            if (token.test(object.getCell(row, column).text)) return true;
+          }
+        }
+      }
+      return type === "image-placeholder" && (object as unknown as { placeholderRole?: string }).placeholderRole === key;
+    });
+    if (!target) return false;
+    this.setTool("select");
+    canvas.setActiveObject(target);
+    canvas.requestRenderAll();
+    this.refresh();
+    return true;
   }
 
   /**
@@ -2940,6 +3173,9 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
     if (this.state.placeholders.length > 0) {
       template.meta.placeholders = this.state.placeholders;
     }
+    if (this.state.computedSpecs.length > 0) {
+      template.meta.computed = this.state.computedSpecs;
+    }
     return template;
   }
 
@@ -2963,6 +3199,67 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
         ? this.state.placeholders.map((p) => (p.key === key ? merged : p))
         : [...this.state.placeholders, merged];
     this.setState({ placeholders: next });
+    this.commit("Edit data field");
+  }
+
+  setComputedSpecs(specs: ComputedSpec[]): void {
+    this.setState({ computedSpecs: specs.map((spec) => ({ ...spec, args: [...spec.args] })) });
+    this.commit("Edit calculations");
+  }
+
+  /** Rename one dynamic key everywhere it appears, as one undoable edit. */
+  renamePlaceholderKey(oldKey: string, newKey: string): string | null {
+    const next = newKey.trim();
+    if (!/^[A-Za-z0-9_.-]+$/.test(next)) {
+      return "Use letters, numbers, dots, dashes, or underscores for a field key.";
+    }
+    if (next === oldKey) return null;
+    const template = this.getTemplate();
+    const alreadyUsed = template.objects.some((object) => {
+      if (object.type === "field") return object.key === next;
+      if (object.type === "text") return extractVariables(object.text).includes(next);
+      if (object.type === "table") return object.cells.some((cell) => extractVariables(cell.text).includes(next));
+      return object.type === "image-placeholder" && object.placeholderRole === next;
+    });
+    if (alreadyUsed) return `The key “${next}” is already used.`;
+
+    const token = new RegExp(`\\{\\{\\s*${escapeRegExp(oldKey)}\\s*\\}\\}`, "g");
+    const canvas = this.canvas;
+    if (!canvas) return "The editor is not ready.";
+    for (const object of canvas.getObjects()) {
+      const appType = (object as unknown as { appType?: string }).appType;
+      if (appType === "text" || appType === "field") {
+        const textObject = object as unknown as {
+          text: string;
+          set: (props: Record<string, unknown>) => void;
+        } & { key?: string };
+        const text = textObject.text.replace(token, `{{${next}}}`);
+        textObject.set({ text, ...(appType === "field" ? { key: next } : {}) });
+      } else if (appType === "table") {
+        const table = object as BillTable;
+        for (let row = 0; row < table.rows; row += 1) {
+          for (let column = 0; column < table.columns; column += 1) {
+            const cell = table.getCell(row, column);
+            const text = cell.text.replace(token, `{{${next}}}`);
+            if (text !== cell.text) table.setCellText(row, column, text);
+          }
+        }
+      }
+    }
+    this.setState({
+      placeholders: this.state.placeholders.map((spec) =>
+        spec.key === oldKey ? { ...spec, key: next } : spec,
+      ),
+      computedSpecs: this.state.computedSpecs.map((spec) => ({
+        ...spec,
+        args: spec.args.map((arg) => arg === oldKey ? next : arg.endsWith(`.${oldKey}`) ? `${arg.slice(0, -oldKey.length)}${next}` : arg),
+        ...(spec.rateKey ? { rateKey: spec.rateKey === oldKey ? next : spec.rateKey.endsWith(`.${oldKey}`) ? `${spec.rateKey.slice(0, -oldKey.length)}${next}` : spec.rateKey } : {}),
+      })),
+    });
+    canvas.requestRenderAll();
+    this.refresh();
+    this.commit("Rename data field");
+    return null;
   }
 
   /**
@@ -3009,6 +3306,7 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
       document: { ...template.document },
       documentName: template.meta?.name ?? "Untitled bill template",
 placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
+      computedSpecs: Array.isArray(template.meta?.computed) ? template.meta.computed : [],
     // Adopted from the opened file so a layout template re-opens as one. The
     // key is left undefined for a template that never had it, which is the
     // state that keeps a fixed-layout bill rendering as it always has.
@@ -3062,10 +3360,20 @@ placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
         ? (selectedTemplates[0] as TableObject & { repeat?: TableRepeat })
         : null;
 
+    // Counted from the objects themselves, not from the panel's contract list,
+    // so editing a field's properties never reads as new progress.
+    const dataFieldCount =
+      traced.filter((o) =>
+        isDataFieldObject({
+          appType: (o as unknown as { appType?: string }).appType,
+        }),
+      ).length + (selectedTable?.repeat ? 1 : 0);
+
     this.setState({
       selection,
       layers,
       objectCount: traced.length,
+      dataFieldCount,
       canUndo: this.history.canUndo,
       canRedo: this.history.canRedo,
       selectedTable,
@@ -3081,6 +3389,17 @@ placeholders: normalisePlaceholderSpecs(template.meta?.placeholders),
     return (
       this.canvas?.getObjects().find((o) => this.getId(o) === id) ?? null
     );
+  }
+
+  selectObjectById(id: string): boolean {
+    const canvas = this.canvas;
+    const object = this.getObjectById(id);
+    if (!canvas || !object) return false;
+    this.setTool("select");
+    canvas.setActiveObject(object);
+    canvas.requestRenderAll();
+    this.refresh();
+    return true;
   }
 
   /** Serialise the current selection for the properties panel. */
@@ -3145,4 +3464,19 @@ function analysePlaceholdersSafe(text: string): {  role: string | null;
     role: null,
     roleKind: /\{\{[^}]*\}\}/.test(text) ? "variable" : "static",
   };
+}
+
+/** appType stamped on the polygon overlays, so they never become artwork. */
+const POLYGON_MARKER_APP_TYPE = "polygon-marker";
+
+function isPolygonMarker(o: unknown): boolean {
+  return (
+    typeof o === "object" &&
+    o !== null &&
+    (o as { appType?: string }).appType === POLYGON_MARKER_APP_TYPE
+  );
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

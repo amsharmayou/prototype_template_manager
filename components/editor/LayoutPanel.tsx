@@ -1,6 +1,6 @@
 "use client";
 
-import { Field, NumberInput, Panel, Select } from "@/components/ui/Controls";
+import { Checkbox, Field, NumberInput, Section, Select } from "@/components/ui/Controls";
 import type { EditorController, EditorState } from "@/lib/canvas/EditorController";
 import { setGuideCap } from "@/lib/canvas/guides";
 import type {
@@ -35,47 +35,60 @@ import type {
  */
 
 const GROWTH_OPTIONS: { value: GrowthMode; label: string }[] = [
-  { value: "fixed", label: "Fixed size" },
-  { value: "unbounded", label: "Expand as needed" },
-  { value: "bounded", label: "Expand, with a limit" },
+  { value: "fixed", label: "Keep the size" },
+  { value: "unbounded", label: "Grow if needed" },
+  { value: "bounded", label: "Grow, up to a limit" },
 ];
 
 const EDGE_OPTIONS: { value: AttachmentEdge; label: string }[] = [
-  { value: "top", label: "Top edge" },
-  { value: "bottom", label: "Bottom edge" },
-  { value: "left", label: "Left edge" },
-  { value: "right", label: "Right edge" },
+  { value: "top", label: "What the top edge follows" },
+  { value: "bottom", label: "What the bottom edge follows" },
+  { value: "left", label: "What the left edge follows" },
+  { value: "right", label: "What the right edge follows" },
 ];
 
 const STRATEGY_OPTIONS: { value: TextWrapPolicy; label: string }[] = [
-  { value: "wrap", label: "Wrap within width" },
+  { value: "wrap", label: "Let it wrap" },
   { value: "noWrap", label: "Keep on one line" },
 ];
 
 const BEHAVIOR_OPTIONS: { value: AttachmentBehavior; label: string }[] = [
-  { value: "move", label: "Move with guide" },
-  { value: "stretch", label: "Stretch with guide" },
+  { value: "move", label: "Follow along without changing size" },
+  { value: "stretch", label: "Stretch to keep touching" },
 ];
 
 const DOCUMENT_GROWTH_OPTIONS: { value: DocumentGrowth; label: string }[] = [
-  { value: "fixed", label: "Fixed page" },
-  { value: "expand", label: "Let page grow" },
+  { value: "fixed", label: "Keep the paper size" },
+  { value: "expand", label: "Let the page grow" },
 ];
 
-const ANCHOR_OPTIONS: { value: AnchorRule; label: string }[] = [
-  { value: "start", label: "Keep top/left offset" },
-  { value: "end", label: "Keep bottom/right inset" },
-  { value: "stretch", label: "Stretch with parent" },
+/**
+ * Anchors read as sentences about the edge they hold, per axis: "start" is
+ * the left edge horizontally and the top edge vertically, and saying so beats
+ * making the author translate.
+ */
+const anchorOptions = (
+  axis: "horizontal" | "vertical",
+): { value: AnchorRule; label: string }[] => [
+  {
+    value: "start",
+    label: axis === "horizontal" ? "Keep the left edge" : "Keep the top edge",
+  },
+  {
+    value: "end",
+    label: axis === "horizontal" ? "Keep the right edge" : "Keep the bottom edge",
+  },
+  { value: "stretch", label: "Stretch with the frame" },
 ];
 
 const CONTAINER_GROWTH_OPTIONS: { value: ContainerGrowth; label: string }[] = [
-  { value: "content", label: "Grow around children" },
-  { value: "fixed", label: "Fixed size" },
+  { value: "content", label: "Around its contents" },
+  { value: "fixed", label: "Keep the same size" },
 ];
 
 const COLLISION_OPTIONS: { value: CollisionPolicy; label: string }[] = [
-  { value: "report", label: "Report overlap" },
-  { value: "allow", label: "Allow overlap" },
+  { value: "report", label: "Warn me" },
+  { value: "allow", label: "Leave it" },
 ];
 
 function isContainerShape(type: TemplateObject["type"]): boolean {
@@ -144,19 +157,19 @@ function HierarchySection({
   };
 
   return (
-    <Panel title="Variable layout — container">
-      <p className="text-[11px] text-neutral-500">
-        Membership is explicit: a child names its container. Proximity alone
-        never joins them.
+    <Section id="frame" title="Inside its frame">
+      <p className="text-[12px] leading-relaxed text-ink-soft">
+        A frame holds the objects you add to it &mdash; being near it is not
+        enough.
       </p>
-      <Field label="Layout parent" hint="Distinct from editor groups.">
+      <Field label="Which frame holds it" hint="This is separate from grouping.">
         <Select
           value={layoutParentId ?? ""}
           options={[
-            { value: "", label: "No parent" },
+            { value: "", label: "Not in a frame" },
             ...choices.map((p) => ({ value: p.id, label: `${p.name} (${p.id})` })),
           ]}
-          onChange={(v) => controller.setLayoutParent(objectId, v || null, "Layout parent")}
+          onChange={(v) => controller.setLayoutParent(objectId, v || null, "Which frame holds it")}
         />
       </Field>
       {layoutParentId ? (
@@ -164,14 +177,14 @@ function HierarchySection({
           <Field label="Horizontal anchor">
             <Select
               value={anchor?.horizontal ?? "start"}
-              options={ANCHOR_OPTIONS}
+              options={anchorOptions("horizontal")}
               onChange={(v) => setAnchorAxis("horizontal", v as AnchorRule)}
             />
           </Field>
           <Field label="Vertical anchor">
             <Select
               value={anchor?.vertical ?? "start"}
-              options={ANCHOR_OPTIONS}
+              options={anchorOptions("vertical")}
               onChange={(v) => setAnchorAxis("vertical", v as AnchorRule)}
             />
           </Field>
@@ -179,20 +192,15 @@ function HierarchySection({
       ) : null}
       {isContainerShape(objectType) ? (
         <>
-          <Field label="Container" hint="Only an enabled frame grows around its children.">
-            <Select
-              value={enabled ? "on" : "off"}
-              options={[
-                { value: "off", label: "Plain frame" },
-                { value: "on", label: "Layout container" },
-              ]}
-              onChange={(v) =>
-                v === "on"
-                  ? controller.setContainer(objectId, withPolicy({}), "Container")
-                  : controller.setContainer(objectId, undefined, "Container")
-              }
-            />
-          </Field>
+          <Checkbox
+            label="Shrink-wrap the frame around its contents"
+            checked={enabled}
+            onChange={(v) =>
+              v
+                ? controller.setContainer(objectId, withPolicy({}), "Container")
+                : controller.setContainer(objectId, undefined, "Container")
+            }
+          />
           {enabled ? (
             <>
               <Field label="Horizontal container">
@@ -211,10 +219,10 @@ function HierarchySection({
               </Field>
               <div className="space-y-1 border-t border-neutral-100 pt-2">
                 <p className="text-[11px] font-medium text-neutral-600">
-                  Inside padding (px)
+                  Space kept inside the frame (px)
                 </p>
-                <p className="text-[10px] text-neutral-400">
-                  The gap the frame keeps around its children when it grows. With
+                <p className="text-[12px] text-neutral-400">
+                  The gap the frame keeps around its contents when it grows. At
                   0, a child can reach the frame&apos;s own edge.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
@@ -231,35 +239,35 @@ function HierarchySection({
               </div>
               <div className="space-y-1 border-t border-neutral-100 pt-2">
                 <p className="text-[11px] font-medium text-neutral-600">
-                  Size limits (px)
+                  Smallest / largest size (px)
                 </p>
-                <p className="text-[10px] text-neutral-400">
-                  Blank means no limit. A frame that stops at its maximum reports
-                  the child that no longer fits.
+                <p className="text-[12px] text-neutral-400">
+                  Blank means no limit. A frame that stops at its largest size
+                  reports the child that no longer fits.
                 </p>
                 <div className="grid grid-cols-2 gap-2">
-                  <Field label="Min width">
+                  <Field label="Smallest width">
                     <NumberInput
                       value={container?.minWidth ?? Number.NaN}
                       min={0}
                       onChange={(v) => setSize("minWidth", v, "Container minimum")}
                     />
                   </Field>
-                  <Field label="Min height">
+                  <Field label="Smallest height">
                     <NumberInput
                       value={container?.minHeight ?? Number.NaN}
                       min={0}
                       onChange={(v) => setSize("minHeight", v, "Container minimum")}
                     />
                   </Field>
-                  <Field label="Max width">
+                  <Field label="Largest width">
                     <NumberInput
                       value={container?.maxWidth ?? Number.NaN}
                       min={0}
                       onChange={(v) => setSize("maxWidth", v, "Container maximum")}
                     />
                   </Field>
-                  <Field label="Max height">
+                  <Field label="Largest height">
                     <NumberInput
                       value={container?.maxHeight ?? Number.NaN}
                       min={0}
@@ -272,7 +280,7 @@ function HierarchySection({
           ) : null}
         </>
       ) : null}
-    </Panel>
+    </Section>
   );
 }
 
@@ -363,7 +371,7 @@ function ExpansionSection({
           />
         </Field>
         {mode === "bounded" ? (
-          <Field label="Maximum extra">
+          <Field label="Stop growing after (px)">
             <NumberInput
               value={expansion?.[axis]?.maxGrowth ?? 0}
               onChange={(v) => setCap(axis, v)}
@@ -383,7 +391,7 @@ function ExpansionSection({
               <Select
                 value={strategy ?? ""}
                 options={[
-                  { value: "", label: "Default" },
+                  { value: "", label: "Automatic" },
                   ...STRATEGY_OPTIONS,
                 ]}
                 onChange={(v) =>
@@ -393,7 +401,7 @@ function ExpansionSection({
             </Field>
             {growthGuides.length > 0 ? (
               <Field
-                label={`${label} pushes guide`}
+                label="Which line moves with it"
                 hint="When this side outgrows its box, the chosen boundary moves with it."
               >
                 <Select
@@ -416,14 +424,14 @@ function ExpansionSection({
   };
 
   return (
-    <Panel title="Variable layout — growth">
-      <p className="text-[11px] text-neutral-500">
+    <Section id="growth" title="When data is longer">
+      <p className="text-[12px] leading-relaxed text-ink-soft">
         Lets this object take more room when a value is longer than the space
         traced for it.
       </p>
       {axisRow("y", "Vertical")}
       {axisRow("x", "Horizontal")}
-    </Panel>
+    </Section>
   );
 }
 
@@ -469,10 +477,10 @@ function AttachSection({
   ];
 
   return (
-    <Panel title="Variable layout — attachments">
-      <p className="text-[11px] text-neutral-500">
-        A moving guide drags the chosen edge with it. Move keeps the size;
-        stretch holds the opposite edge and resizes.
+    <Section id="follows" title="What moves with this">
+      <p className="text-[12px] leading-relaxed text-ink-soft">
+        Each edge can follow a line. Following along keeps the size; stretching
+        holds the opposite edge where it is.
       </p>
       {edges.map((edge) => {
         const attached = guideFor(edge) !== "";
@@ -511,7 +519,7 @@ function AttachSection({
           </div>
         );
       })}
-    </Panel>
+    </Section>
   );
 }
 
@@ -526,18 +534,18 @@ function GuidesSection({
 }) {
   if (guides.length === 0) return null;
   return (
-    <Panel title={`Variable layout — guides (${guides.length})`}>
+    <Section id="guides" title={`Guide lines (${guides.length})`}>
       {guides.map((g) => (
         <div
           key={g.id}
           className="flex items-end gap-2 border-b border-neutral-100 py-1 last:border-b-0"
         >
           <div className="min-w-0 flex-1">
-            <p className="truncate text-[11px] text-neutral-700">
+            <p className="truncate text-[12px] text-neutral-700">
               {g.id} · {g.orientation === "horizontal" ? "horizontal" : "vertical"} @{" "}
               {Math.round(g.position)}px
             </p>
-            <Field label="Max travel">
+            <Field label="How far this line can move">
               <NumberInput
                 value={g.maxDisplacement ?? 0}
                 onChange={(v) =>
@@ -554,11 +562,11 @@ function GuidesSection({
           </div>
         </div>
       ))}
-      <p className="text-[10px] text-neutral-400">
+      <p className="text-[12px] text-neutral-400">
         Page is {Math.round(documentHeight)}px tall. Select a guide and press
         Delete to remove it.
       </p>
-    </Panel>
+    </Section>
   );
 }
 
@@ -632,10 +640,10 @@ function DocumentSection({
   if (!hasLayout && !hasGrowth) return null;
 
   return (
-    <Panel title="Variable layout — page">
-      <p className="text-[11px] text-neutral-500">
-        Fixed keeps the traced sheet and reports overflow; expand lets the page
-        follow the content.
+    <Section id="page" title="The page">
+      <p className="text-[12px] leading-relaxed text-ink-soft">
+        Keeping the paper size keeps the traced sheet and reports anything that
+        spills. Letting the page grow follows the content.
       </p>
       <Field label="Horizontal page">
         <Select
@@ -651,7 +659,7 @@ function DocumentSection({
           onChange={(v) => setDoc({ growthY: v as DocumentGrowth }, "Page growth")}
         />
       </Field>
-      <Field label="Max page width" hint="Blank means no explicit cap.">
+      <Field label="Largest page width" hint="Leave blank for no limit.">
         <NumberInput
           value={doc?.maxWidth ?? Number.NaN}
           onChange={(v) =>
@@ -659,7 +667,7 @@ function DocumentSection({
           }
         />
       </Field>
-      <Field label="Max page height" hint="Blank means no explicit cap.">
+      <Field label="Largest page height" hint="Leave blank for no limit.">
         <NumberInput
           value={doc?.maxHeight ?? Number.NaN}
           onChange={(v) =>
@@ -667,14 +675,14 @@ function DocumentSection({
           }
         />
       </Field>
-      <Field label="Sibling overlap" hint="Report keeps geometry and warns; allow stays silent.">
+      <Field label="If objects overlap" hint="Warn me keeps the layout and warns; Leave it stays quiet.">
         <Select
           value={state.layout?.collision ?? "report"}
           options={COLLISION_OPTIONS}
           onChange={(v) => setCollision(v as CollisionPolicy)}
         />
       </Field>
-    </Panel>
+    </Section>
   );
 }
 

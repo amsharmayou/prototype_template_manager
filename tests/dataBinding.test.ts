@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   extractTemplateFields,
   fillTemplate,
+  defaultValuesForTemplate,
   humanizeKey,
+  validateTemplateValues,
 } from "@/lib/template/dataBinding";
 import { emptyTemplate, type BillTemplate, type TemplateObject } from "@/lib/template/types";
 
@@ -12,6 +14,18 @@ function templateWith(objects: TemplateObject[]): BillTemplate {
   t.objects = objects;
   return t;
 }
+
+describe("date field validation", () => {
+  const dateField = [{ key: "date", label: "Date", type: "date" as const, source: "field" as const, objectName: "Date" }];
+
+  it.each(["2024-02-29", "2000-02-29", "2026-10-17"])("accepts valid calendar date %s", (value) => {
+    expect(validateTemplateValues(dateField, { date: value })).toEqual([]);
+  });
+
+  it.each(["2023-02-29", "1900-02-29", "2026-13-01", "2026-04-31", "2026-1-01"])("rejects invalid calendar date %s", (value) => {
+    expect(validateTemplateValues(dateField, { date: value })).toHaveLength(1);
+  });
+});
 
 const text = (over: Record<string, unknown>): TemplateObject =>
   ({
@@ -192,6 +206,23 @@ describe("extractTemplateFields", () => {
     expect(extractTemplateFields(t).find((f) => f.key === "weird")!.type).toBe(
       "text",
     );
+  });
+});
+
+describe("defaultValuesForTemplate", () => {
+  it("uses configured defaults while skipping image and repeat-only fields", () => {
+    const repeatingTable = {
+      ...table,
+      repeat: { key: "items", startRow: 0, endRow: 1, maxItems: 10 },
+    } as unknown as TemplateObject;
+    const t = templateWith([text({ text: "{{customer_name}}" }), repeatingTable, logo]);
+    t.meta.placeholders = [
+      { key: "customer_name", defaultValue: "Northwind" },
+      { key: "item_name", defaultValue: "not-a-form-default" },
+      { key: "logo", defaultValue: "not-an-image" },
+    ];
+
+    expect(defaultValuesForTemplate(t, ["total"])).toEqual({ customer_name: "Northwind" });
   });
 });
 

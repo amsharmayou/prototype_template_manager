@@ -76,6 +76,17 @@ export function hasVariable(text: string): boolean {
   return new RegExp(TOKEN_SOURCE).test(text);
 }
 
+/**
+ * Whether a traced object is a drawn data-field box.
+ *
+ * The step guide counts these, so a field the author has placed but not yet
+ * configured still counts as marked data — and re-typing or re-labelling it
+ * later cannot change whether the step is done.
+ */
+export function isDataFieldObject(obj: { appType?: string }): boolean {
+  return obj.appType === "field";
+}
+
 export function analysePlaceholders(text: string): PlaceholderInfo {
   const variables = extractVariables(text);
   if (variables.length === 0) {

@@ -1,16 +1,16 @@
 ﻿"use client";
 
 import { useRef } from "react";
-import { useRouter } from "next/navigation";
 
-import ExportMenu from "./ExportMenu";
-import { Button } from "@/components/ui/Controls";
+import { Redo2, Undo2 } from "lucide-react";
+
+import CopyMenu from "./ExportMenu";
+import OpenMenu from "./OpenMenu";
+import { Button, IconButton, TextInput } from "@/components/ui/Controls";
+import { useToast } from "@/components/ui/Toast";
 import type { EditorController, EditorState } from "@/lib/canvas/EditorController";
-import { exportJson } from "@/lib/export/toSvg";
-import { downloadText, safeFilename } from "@/lib/export/download";
-import { buildShareDocument } from "@/lib/share/document";
-import { saveTemplate, setPendingTemplate } from "@/lib/client/templateStore";
 import type { BillTemplate } from "@/lib/template/types";
+import { readTemplateFile } from "@/lib/client/readTemplateFile";
 
 export default function TopBar({
   controller,
@@ -18,6 +18,9 @@ export default function TopBar({
   onOpenImage,
   onLoadTemplate,
   onTogglePreview,
+  onSave,
+  onFillAndPrint,
+  onShare,
   preview,
 }: {
   controller: EditorController;
@@ -25,69 +28,55 @@ export default function TopBar({
   onOpenImage: () => void;
   onLoadTemplate: (t: BillTemplate) => void;
   onTogglePreview: () => void;
+  onSave: () => void;
+  onFillAndPrint: () => void;
+  onShare: () => void;
   preview: boolean;
 }) {
-  const imageInput = useRef<HTMLInputElement | null>(null);
   const jsonInput = useRef<HTMLInputElement | null>(null);
-  const router = useRouter();
+  const { toast } = useToast();
 
   return (
-    <header className="flex items-center gap-2 border-b border-neutral-200 bg-white px-3 py-2">
-      <h1 className="mr-2 text-sm font-semibold text-neutral-800">
+    <header className="flex items-center gap-2 border-b border-rule bg-paper px-3 pt-1.5 pb-[5px]">
+      <h1 className="mr-1 shrink-0 font-display text-[13px] font-semibold text-ink">
         Bill Template Maker
       </h1>
+      <label className="sr-only" htmlFor="btm-doc-name">
+        Bill name
+      </label>
+      <div className="w-44 shrink-0">
+        <TextInput
+          id="btm-doc-name"
+          value={state.documentName}
+          placeholder="Untitled bill"
+          onChange={(e) => controller.setDocumentName(e.target.value)}
+          className="h-8"
+        />
+      </div>
 
-      <Button onClick={onOpenImage}>Open Bill</Button>
-      <Button onClick={() => exportJson(controller.getTemplate())}>
-        Save Template
-      </Button>
-      <Button
-        onClick={() =>
-          saveTemplate(state.documentName || "Untitled bill template", controller.getTemplate())
-        }
+      <span aria-hidden className="mx-1 h-5 w-px bg-rule" />
+      <IconButton
+        label="Undo"
+        onClick={() => controller.undo()}
+        disabled={!state.canUndo}
       >
-        Save to My Templates
-      </Button>
-      <Button
-        onClick={() => {
-          setPendingTemplate(controller.getTemplate());
-          router.push("/render");
-        }}
-        variant="primary"
+        <Undo2 aria-hidden className="h-4 w-4" />
+      </IconButton>
+      <IconButton
+        label="Redo"
+        onClick={() => controller.redo()}
+        disabled={!state.canRedo}
       >
-        Fill &amp; Render →
+        <Redo2 aria-hidden className="h-4 w-4" />
+      </IconButton>
+      <span aria-hidden className="mx-1 h-5 w-px bg-rule" />
+
+      <Button onClick={onOpenImage} title="Choose a photo of your bill">
+        Add bill photo
       </Button>
-      <Button
-        onClick={async () => {
-          try {
-            const response = await fetch("/sharekit.js");
-            if (!response.ok) {
-              throw new Error(`share kit unavailable (${response.status})`);
-            }
-            const kit = await response.text();
-            downloadText(
-              buildShareDocument(controller.getTemplate(), kit),
-              `${safeFilename(state.documentName || "template")}.html`,
-              "text/html;charset=utf-8",
-            );
-          } catch (error) {
-            window.alert(
-              `Could not build the shareable file.\n\n${error instanceof Error ? error.message : String(error)}\n\n` +
-                "Run `npm run build:share` and reload.",
-            );
-          }
-        }}
-        title="Download one offline HTML file that fills, previews and prints this template"
-      >
-        Share as .html
-      </Button>
-      <input
-        ref={imageInput}
-        type="file"
-        accept="image/png,image/jpeg,image/webp"
-        className="hidden"
-        onChange={() => undefined}
-        id="btm-image-input"
+      <OpenMenu
+        onOpenFile={() => jsonInput.current?.click()}
+        onPickSaved={onLoadTemplate}
       />
       <input
         ref={jsonInput}
@@ -99,31 +88,16 @@ export default function TopBar({
           e.target.value = "";
           if (!file) return;
           try {
-            const text = await file.text();
-            onLoadTemplate(JSON.parse(text) as BillTemplate);
-          } catch {
-            window.alert("That file is not a valid bill template JSON.");
+            onLoadTemplate(await readTemplateFile(file));
+          } catch (error) {
+            toast({
+              kind: "error",
+              title: "That file isn't a bill template",
+              detail: error instanceof Error ? error.message : "Choose a supported .json template file.",
+            });
           }
         }}
       />
-      <Button onClick={() => jsonInput.current?.click()}>Load Template</Button>
-
-      <span className="mx-1 h-5 w-px bg-neutral-200" />
-
-      <Button
-        onClick={() => controller.undo()}
-        disabled={!state.canUndo}
-        title="Undo (Ctrl/Cmd+Z)"
-      >
-        ↶ Undo
-      </Button>
-      <Button
-        onClick={() => controller.redo()}
-        disabled={!state.canRedo}
-        title="Redo (Ctrl/Cmd+Shift+Z)"
-      >
-        ↷ Redo
-      </Button>
 
       <div className="flex-1" />
 
@@ -134,7 +108,19 @@ export default function TopBar({
       >
         {preview ? "Back to Editor" : "Preview"}
       </Button>
-      <ExportMenu controller={controller} />
+      <Button onClick={onSave} title="Keep a copy on this device">
+        Save
+      </Button>
+      <Button variant="primary" onClick={onFillAndPrint}>
+        Fill &amp; print
+      </Button>
+      <Button
+        onClick={onShare}
+        title="Download one offline HTML file that fills, previews and prints this template"
+      >
+        Share
+      </Button>
+      <CopyMenu controller={controller} />
     </header>
   );
 }

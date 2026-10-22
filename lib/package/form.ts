@@ -20,6 +20,7 @@ export interface FormField {
   objectName: string;
   maxLength?: number;
   required?: boolean;
+  defaultValue?: string;
   pattern?: string;
   min?: number;
   max?: number;
@@ -99,6 +100,7 @@ export function deriveForm(manifest: PackageManifest, template?: BillTemplate): 
           objectName: typeof f.objectName === "string" ? f.objectName : "",
           ...(typeof f.maxLength === "number" ? { maxLength: f.maxLength } : {}),
           ...(f.required === true ? { required: true } : {}),
+          ...(typeof f.defaultValue === "string" ? { defaultValue: f.defaultValue } : {}),
           ...(typeof f.pattern === "string" ? { pattern: f.pattern } : {}),
           ...(typeof f.min === "number" ? { min: f.min } : {}),
           ...(typeof f.max === "number" ? { max: f.max } : {}),

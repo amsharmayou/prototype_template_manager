@@ -1,0 +1,227 @@
+{
+  "templateVersion": 2,
+  "document": {
+    "width": 1127,
+    "height": 871
+  },
+  "meta": {
+    "name": "2",
+    "modifiedAt": "2026-10-14T17:16:45.399Z"
+  },
+  "objects": [
+    {
+      "id": "rect_8oytdhn",
+      "name": "Rectangle 1",
+      "role": null,
+      "x": 215.93,
+      "y": 138.61,
+      "width": 686.39,
+      "height": 531.44,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 0,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0,
+      "expansion": {
+        "x": {
+          "mode": "fixed"
+        },
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "id": "rect_97e4jyr",
+      "name": "Rectangle 2",
+      "role": null,
+      "x": 257.88,
+      "y": 452.11,
+      "width": 286.98,
+      "height": 152.56,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 1,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0
+    },
+    {
+      "id": "rect_apph1si",
+      "name": "Rectangle 3",
+      "role": null,
+      "x": 593.53,
+      "y": 453.78,
+      "width": 258.45,
+      "height": 142.5,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 2,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0
+    },
+    {
+      "id": "rect_b5s870i",
+      "name": "Rectangle 4",
+      "role": null,
+      "x": 257.88,
+      "y": 193.93,
+      "width": 285.3,
+      "height": 222.97,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 3,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0,
+      "expansion": {
+        "x": {
+          "mode": "fixed"
+        },
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "id": "rect_cftyhvr",
+      "name": "Rectangle 5",
+      "role": null,
+      "x": 585.14,
+      "y": 200.64,
+      "width": 266.84,
+      "height": 105.62,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 4,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0
+    },
+    {
+      "id": "rect_dxwbbeq",
+      "name": "Rectangle 6",
+      "role": null,
+      "x": 588.5,
+      "y": 331.4,
+      "width": 255.09,
+      "height": 87.18,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 5,
+      "parentId": null,
+      "stroke": "#000000",
+      "strokeWidth": 1.5,
+      "fill": "transparent",
+      "type": "rect",
+      "cornerRadius": 0,
+      "expansion": {
+        "x": {
+          "mode": "fixed"
+        },
+        "y": {
+          "mode": "unbounded"
+        }
+      }
+    },
+    {
+      "id": "field_eqgsmkr",
+      "name": "Field 1",
+      "role": null,
+      "x": 269.13,
+      "y": 213.55,
+      "width": 260.13,
+      "height": 144.17,
+      "rotation": 0,
+      "opacity": 1,
+      "visible": true,
+      "locked": false,
+      "zIndex": 6,
+      "parentId": null,
+      "stroke": "#2563eb",
+      "strokeWidth": 1,
+      "fill": "#000000",
+      "type": "field",
+      "key": "field_1",
+      "fieldType": "text",
+      "text": "{{field_1}}",
+      "fontFamily": "Arial",
+      "fontSize": 14,
+      "fontWeight": "normal",
+      "fontStyle": "normal",
+      "textAlign": "left",
+      "lineHeight": 1.16,
+      "charSpacing": 0,
+      "roleKind": "variable",
+      "textVerticalAlign": "top",
+      "expansion": {
+        "x": {
+          "mode": "fixed"
+        },
+        "y": {
+          "mode": "unbounded",
+          "strategy": "wrap"
+        }
+      }
+    }
+  ],
+  "layout": {
+    "mode": "variable",
+    "guides": [
+      {
+        "id": "guide-1",
+        "orientation": "horizontal",
+        "position": 370.13881599739017
+      }
+    ],
+    "attachments": [
+      {
+        "id": "att-field_eqgsmkr-top",
+        "objectId": "field_eqgsmkr",
+        "edge": "top",
+        "guideId": "guide-1",
+        "behavior": "stretch"
+      },
+      {
+        "id": "att-field_eqgsmkr-bottom",
+        "objectId": "field_eqgsmkr",
+        "edge": "bottom",
+        "guideId": "guide-1",
+        "behavior": "stretch"
+      }
+    ],
+    "document": {
+      "growthX": "expand",
+      "growthY": "expand"
+    }
+  }
+}

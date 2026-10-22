@@ -16,7 +16,22 @@ export interface ReferenceHandle {
   /** Natural (unstretched) image dimensions. */
   width: number;
   height: number;
+  sourceWidth: number;
+  sourceHeight: number;
+  /** Original authoring aid; never serialized into the bill template. */
+  sourceDataUrl: string;
+  crop: ReferenceCrop;
+  rotation: 0 | 90 | 180 | 270;
 }
+
+export interface ReferenceCrop {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
+export const EMPTY_REFERENCE_CROP: ReferenceCrop = { top: 0, right: 0, bottom: 0, left: 0 };
 
 /**
  * Average the colour of the 1px outer ring of the image, capped at 32px on the
@@ -106,7 +121,16 @@ export async function install(
   });
   const width = Math.round(image.width ?? 0);
   const height = Math.round(image.height ?? 0);
-  const ref: ReferenceHandle = { image, width, height };
+  const ref: ReferenceHandle = {
+    image,
+    width,
+    height,
+    sourceWidth: width,
+    sourceHeight: height,
+    sourceDataUrl: dataUrl,
+    crop: { ...EMPTY_REFERENCE_CROP },
+    rotation: 0,
+  };
   image.set({
     left: 0,
     top: 0,
@@ -123,16 +147,123 @@ export async function install(
   return ref;
 }
 
+/** Create an adjusted authoring reference without mutating or serializing its source. */
+export async function buildAdjustedReference(
+  current: ReferenceHandle,
+  crop: ReferenceCrop,
+  rotation: 0 | 90 | 180 | 270,
+  opacity: number,
+): Promise<ReferenceHandle> {
+  const source = await loadImage(current.sourceDataUrl);
+  const safeCrop = clampCrop(crop);
+  const sx = source.naturalWidth * safeCrop.left / 100;
+  const sy = source.naturalHeight * safeCrop.top / 100;
+  const sw = source.naturalWidth * (100 - safeCrop.left - safeCrop.right) / 100;
+  const sh = source.naturalHeight * (100 - safeCrop.top - safeCrop.bottom) / 100;
+  const sideways = rotation === 90 || rotation === 270;
+  const outWidth = Math.max(1, Math.round(sideways ? sh : sw));
+  const outHeight = Math.max(1, Math.round(sideways ? sw : sh));
+  const work = document.createElement("canvas");
+  work.width = outWidth;
+  work.height = outHeight;
+  const context = work.getContext("2d");
+  if (!context) throw new Error("Could not prepare the cropped reference image.");
+  if (rotation === 90) {
+    context.translate(outWidth, 0);
+    context.rotate(Math.PI / 2);
+  } else if (rotation === 180) {
+    context.translate(outWidth, outHeight);
+    context.rotate(Math.PI);
+  } else if (rotation === 270) {
+    context.translate(0, outHeight);
+    context.rotate(-Math.PI / 2);
+  }
+  context.drawImage(source, sx, sy, sw, sh, 0, 0, sw, sh);
+  const image = await FabricImage.fromURL(work.toDataURL("image/png"), {
+    crossOrigin: "anonymous",
+  });
+  image.set({
+    left: 0,
+    top: 0,
+    originX: "left",
+    originY: "top",
+    selectable: false,
+    evented: false,
+    opacity: clampOpacity(opacity),
+  } as never);
+  return {
+    image,
+    width: Math.round(image.width ?? outWidth),
+    height: Math.round(image.height ?? outHeight),
+    sourceWidth: current.sourceWidth,
+    sourceHeight: current.sourceHeight,
+    sourceDataUrl: current.sourceDataUrl,
+    crop: safeCrop,
+    rotation,
+  };
+}
+
+/** Crop the centre of an image to match the page's aspect ratio. */
+export function cropForPage(
+  width: number,
+  height: number,
+  page: { width: number; height: number },
+  rotation: 0 | 90 | 180 | 270,
+): ReferenceCrop {
+  // Cropping is applied to the unrotated source, so compare its aspect ratio
+  // against the page rotated back into source coordinates.
+  const sideways = rotation === 90 || rotation === 270;
+  const imageAspect = width / Math.max(1, height);
+  const pageAspect = sideways
+    ? page.height / Math.max(1, page.width)
+    : page.width / Math.max(1, page.height);
+  if (imageAspect > pageAspect) {
+    const keep = pageAspect / imageAspect;
+    const trim = (100 - keep * 100) / 2;
+    return { top: 0, right: trim, bottom: 0, left: trim };
+  }
+  const keep = imageAspect / pageAspect;
+  const trim = (100 - keep * 100) / 2;
+  return { top: trim, right: 0, bottom: trim, left: 0 };
+}
+
+function clampCrop(crop: ReferenceCrop): ReferenceCrop {
+  const top = clampPercent(crop.top);
+  const right = clampPercent(crop.right);
+  const bottom = clampPercent(crop.bottom);
+  const left = clampPercent(crop.left);
+  const horizontalScale = Math.min(1, 90 / Math.max(1, left + right));
+  const verticalScale = Math.min(1, 90 / Math.max(1, top + bottom));
+  return {
+    top: top * verticalScale,
+    right: right * horizontalScale,
+    bottom: bottom * verticalScale,
+    left: left * horizontalScale,
+  };
+}
+
+function clampPercent(value: number): number {
+  return Number.isFinite(value) ? Math.min(90, Math.max(0, value)) : 0;
+}
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Could not read the original reference image."));
+    image.src = src;
+  });
+}
+
 function clampOpacity(v: number): number {
   if (!Number.isFinite(v)) return 1;
   return Math.min(1, Math.max(0, v));
 }
 
 /**
- * Stretch the image so it exactly covers the document rect. Called after the
- * page size changes — opening a bill (where it is the identity), loading a
- * template saved from a different bill, or undoing/redoing to a differently
- * sized snapshot.
+ * Fit the full reference image inside the document without changing its
+ * aspect ratio. Called after page size changes and template reloads so tracing
+ * stays aligned without distorting the bill artwork.
  */
 export function fitTo(
   ref: ReferenceHandle,
@@ -140,13 +271,16 @@ export function fitTo(
 ): void {
   const nw = ref.width || 1;
   const nh = ref.height || 1;
+  const scale = Math.min(doc.width / nw, doc.height / nh);
+  const width = nw * scale;
+  const height = nh * scale;
   ref.image.set({
-    left: 0,
-    top: 0,
+    left: (doc.width - width) / 2,
+    top: (doc.height - height) / 2,
     originX: "left",
     originY: "top",
-    scaleX: doc.width / nw,
-    scaleY: doc.height / nh,
+    scaleX: scale,
+    scaleY: scale,
   } as never);
   ref.image.setCoords();
 }

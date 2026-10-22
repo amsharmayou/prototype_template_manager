@@ -5,10 +5,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import CanvasStage from "./CanvasStage";
+import ContextPanel from "./ContextPanel";
 import LayersPanel from "./LayersPanel";
-import PlaceholdersPanel from "./PlaceholdersPanel";
 import PropertiesPanel from "./PropertiesPanel";
-import ReferencePanel from "./ReferencePanel";
+import StageBar from "./StageBar";
+import StepPath from "./StepPath";
 import ToolRail from "./ToolRail";
 import TopBar from "./TopBar";
 import UploadScreen from "./UploadScreen";
@@ -18,15 +19,25 @@ import {
   Dialog,
   Field,
   NumberInput,
-  Panel,
+  Select,
 } from "@/components/ui/Controls";
+import { useToast } from "@/components/ui/Toast";
 import {
   useEditorController,
   useKeyboardShortcuts,
 } from "@/hooks/useEditorController";
-import { emptyTemplate, type BillTemplate } from "@/lib/template/types";
-import { exportJson } from "@/lib/export/toSvg";
-import { setPendingTemplate } from "@/lib/client/templateStore";
+import { shareTemplateAsHtml } from "@/lib/client/shareOut";
+import {
+  firstIncomplete,
+  stepDone,
+  type StepFacts,
+  type StepId,
+} from "@/lib/client/steps";
+import { saveTemplate, setPendingTemplate } from "@/lib/client/templateStore";
+import { clearDraft, loadDraft, saveDraft, type EditorDraft } from "@/lib/client/draftStore";
+import { billNameFromFile } from "@/lib/client/billNameFromFile";
+import { readImageFile } from "@/lib/client/readImageFile";
+import type { BillTemplate } from "@/lib/template/types";
 
 type Stage = "upload" | "editor";
 
@@ -34,41 +45,69 @@ export default function BillEditor() {
   const { controller, state } = useEditorController();
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("upload");
+  const [recoverableDraft, setRecoverableDraft] = useState<EditorDraft | null>(null);
+  const draftArmed = useRef(false);
+  const lastDraftJson = useRef("");
   const [preview, setPreview] = useState(false);
   const imageInput = useRef<HTMLInputElement | null>(null);
+  const { toast } = useToast();
+
+  const persistRecoveryDraft = useCallback((name = state.documentName) => {
+    try {
+      const template = controller.getTemplate();
+      const stableJson = JSON.stringify({ ...template, meta: { ...template.meta, modifiedAt: "" } });
+      if (saveDraft(name, template)) lastDraftJson.current = stableJson;
+    } catch {
+      // Draft saving is best-effort. The explicit Save action reports errors.
+    }
+  }, [controller, state.documentName]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setRecoverableDraft(loadDraft()), 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const handleImage = useCallback(
     (dataUrl: string, name: string) => {
+      draftArmed.current = false;
       setStage("editor");
       setPreview(false);
       void controller
         .whenReady()
         .then(() => controller.addReference(dataUrl))
         .then(() => {
-          controller.setDocumentName(name.replace(/\.[^.]+$/, ""));
+          const billName = billNameFromFile(name);
+          controller.setDocumentName(billName);
           controller.setGridVisible(true);
           controller.setGridSize(10);
+          draftArmed.current = true;
+          persistRecoveryDraft(billName);
         })
         .catch((e: unknown) => {
-          window.alert(
-            `Could not load that image: ${e instanceof Error ? e.message : String(e)}`,
-          );
+          toast({
+            kind: "error",
+            title: "Could not load that picture",
+            detail: e instanceof Error ? e.message : String(e),
+          });
         });
     },
-    [controller],
+    [controller, persistRecoveryDraft, toast],
   );
 
   const handleTemplate = useCallback(
     (t: BillTemplate) => {
+      draftArmed.current = false;
       setStage("editor");
       setPreview(false);
       void controller.whenReady().then(() => {
         controller.loadTemplate(t);
+        draftArmed.current = true;
         const el = controller.getCanvas()?.upperCanvasEl?.parentElement;
         controller.fitToView(el?.clientWidth ?? 800, el?.clientHeight ?? 1000);
+        persistRecoveryDraft(typeof t.meta?.name === "string" ? t.meta.name : "Untitled bill template");
       });
     },
-    [controller],
+    [controller, persistRecoveryDraft],
   );
 
   // The no-editor path: pick a template file, hand it straight to the
@@ -81,9 +120,147 @@ export default function BillEditor() {
     [router],
   );
 
-  useKeyboardShortcuts(controller, {
-    save: () => exportJson(controller.getTemplate()),
-  });
+  const handleResumeDraft = useCallback(() => {
+    if (!recoverableDraft) return;
+    draftArmed.current = false;
+    setStage("editor");
+    setPreview(false);
+    void controller.whenReady().then(() => {
+      controller.loadTemplate(recoverableDraft.template);
+      controller.setDocumentName(recoverableDraft.name);
+      const el = controller.getCanvas()?.upperCanvasEl?.parentElement;
+      controller.fitToView(el?.clientWidth ?? 800, el?.clientHeight ?? 1000);
+      draftArmed.current = true;
+      persistRecoveryDraft(recoverableDraft.name);
+    });
+  }, [controller, persistRecoveryDraft, recoverableDraft]);
+
+  const handleDiscardDraft = useCallback(() => {
+    clearDraft();
+    setRecoverableDraft(null);
+    lastDraftJson.current = "";
+  }, []);
+
+  // Debounce local recovery saves so a drag or a quick series of inspector edits
+  // writes once. The tracing reference is intentionally absent from the model.
+  useEffect(() => {
+    if (stage !== "editor" || !state.ready || !draftArmed.current) return;
+    const timer = window.setTimeout(() => {
+      try {
+        const template = controller.getTemplate();
+        const stableJson = JSON.stringify({
+          ...template,
+          meta: { ...template.meta, modifiedAt: "" },
+        });
+        if (stableJson === lastDraftJson.current) return;
+        if (saveDraft(state.documentName, template)) {
+          lastDraftJson.current = stableJson;
+        }
+      } catch {
+        // Draft saving is best-effort. The explicit Save action reports errors.
+      }
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [controller, stage, state, state.documentName, state.ready]);
+
+  // The step guide is declared before the action callbacks so the "save" and
+  // "fill & print" handlers can mark their facts directly.
+  const [step, setStep] = useState<StepId>("bill");
+  const [testedOnce, setTestedOnce] = useState(false);
+  const [savedOnce, setSavedOnce] = useState(false);
+
+  const handleSave = useCallback(() => {
+    const saved = saveTemplate(
+      state.documentName || "Untitled bill template",
+      controller.getTemplate(),
+    );
+    if (!saved) {
+      toast({
+        kind: "error",
+        title: "Could not save on this device",
+        detail: "Browser storage may be full or unavailable. Download a JSON or Bill Package copy instead.",
+      });
+      return;
+    }
+    setSavedOnce(true);
+    toast({
+      kind: "success",
+      title: "Saved to this device",
+      detail: "Open it again any time from the Fill & print page.",
+    });
+  }, [controller, state.documentName, toast]);
+
+  const handleFillAndPrint = useCallback(() => {
+    setTestedOnce(true);
+    setPendingTemplate(controller.getTemplate());
+    router.push("/render");
+  }, [controller, router]);
+
+  const handleShare = useCallback(() => {
+    void shareTemplateAsHtml(
+      state.documentName,
+      controller.getTemplate(),
+    ).catch((error: unknown) => {
+      toast({
+        kind: "error",
+        title: "Could not build the shareable file",
+        detail: `${error instanceof Error ? error.message : String(error)} — run npm run build:share and reload.`,
+      });
+    });
+  }, [controller, state.documentName, toast]);
+
+  useKeyboardShortcuts(controller, { save: handleSave });
+
+  const facts: StepFacts = {
+    hasReference: state.hasReference,
+    objectCount: state.objectCount,
+    dataFieldCount: state.dataFieldCount,
+    testedOnce,
+    savedOnce,
+  };
+  const done = stepDone(facts);
+
+  const completedBefore = useRef(done[step]);
+  const selectStep = useCallback(
+    (next: StepId) => {
+      // A click that selects an already-finished step must stick: remember the
+      // step's own fact at selection time, so only a later flip can advance.
+      completedBefore.current = done[next];
+      setStep(next);
+      // Step ③'s job is marking data; hand the owner the right tool for it.
+      if (next === "mark") controller.setTool("field");
+    },
+    [controller, done],
+  );
+
+  // Auto-advance fires from the controller's own notifications — calling
+  // setState inside the subscription callback, never synchronously in the
+  // effect body — and only when the *current* step's own fact flips from
+  // false to true.
+  useEffect(() => {
+    return controller.subscribe(() => {
+      const snap = controller.getSnapshot();
+      const nextDone = stepDone({
+        hasReference: snap.hasReference,
+        objectCount: snap.objectCount,
+        dataFieldCount: snap.dataFieldCount,
+        testedOnce,
+        savedOnce,
+      });
+      const was = completedBefore.current;
+      // Step ③ is where a field is configured, so finishing a field there must
+      // not walk the author away mid-edit. The Next step button is the way on.
+      if (!was && nextDone[step] && step !== "mark") {
+        const next = firstIncomplete(nextDone);
+        if (next && next !== step) {
+          completedBefore.current = nextDone[next];
+          setStep(next);
+          return;
+        }
+      }
+      completedBefore.current = nextDone[step];
+    });
+  }, [controller, step, testedOnce, savedOnce]);
 
   // Entering preview hides the reference image; leaving restores whatever the
   // user had chosen before. Declared before the early return so hook order is
@@ -107,9 +284,19 @@ export default function BillEditor() {
 
   const pending = state.pendingTable;
   const [gridOpen, setGridOpen] = useState(false);
+  const [pageSettingsOpen, setPageSettingsOpen] = useState(false);
 
   if (stage === "upload") {
-    return <UploadScreen onImage={handleImage} onTemplate={handleTemplate} onTemplateForRender={handleTemplateForRender} />;
+    return (
+      <UploadScreen
+        onImage={handleImage}
+        onTemplate={handleTemplate}
+        onTemplateForRender={handleTemplateForRender}
+        draft={recoverableDraft}
+        onResumeDraft={handleResumeDraft}
+        onDiscardDraft={handleDiscardDraft}
+      />
+    );
   }
 
   return (
@@ -121,6 +308,9 @@ export default function BillEditor() {
         onOpenImage={() => imageInput.current?.click()}
         onLoadTemplate={handleTemplate}
         onTogglePreview={() => setPreview((v) => !v)}
+        onSave={handleSave}
+        onFillAndPrint={handleFillAndPrint}
+        onShare={handleShare}
       />
 
       <input
@@ -132,62 +322,44 @@ export default function BillEditor() {
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
-          const reader = new FileReader();
-          reader.onload = () => {
-            if (typeof reader.result === "string") {
-              void controller.addReference(reader.result);
-            }
-          };
-          reader.readAsDataURL(file);
+          void readImageFile(file)
+            .then((dataUrl) => handleImage(dataUrl, file.name))
+            .catch((error: unknown) => {
+              toast({
+                kind: "error",
+                title: "Could not open that picture",
+                detail: error instanceof Error ? error.message : String(error),
+              });
+            });
         }}
       />
 
       {preview ? (
-        <div className="border-b border-neutral-200 bg-neutral-50 px-3 py-1.5 text-[11px] text-neutral-500">
+        <div className="border-b border-rule bg-paper px-3 py-1.5 text-[12px] text-ink-soft">
           Preview — reference image and editor controls are hidden. This is
           what the exports contain.
         </div>
       ) : (
-        <ToolRail controller={controller} activeTool={state.tool} />
+        <StepPath done={done} current={step} onSelect={selectStep} />
       )}
 
       <div className="flex min-h-0 flex-1">
         {preview ? null : (
-          <aside className="editor-scroll w-64 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white">
-            <ReferencePanel controller={controller} state={state} />
-            <Panel title="Grid">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-neutral-500">
-                  {state.gridVisible
-                    ? `Visible · ${state.gridSize} px`
-                    : "Hidden"}
-                  {state.snapToGrid ? " · snap on" : ""}
-                </span>
-                <Button onClick={() => setGridOpen(true)}>Grid Settings…</Button>
-              </div>
-            </Panel>
-            <Panel title="Document">
-              <Button
-                variant="default"
-                className="w-full"
-                onClick={() => {
-                  controller.loadTemplate(emptyTemplate());
-                }}
-              >
-                New blank document
-              </Button>
-              <Button
-                variant={state.structureLocked ? "primary" : "default"}
-                className="w-full"
-                onClick={() => controller.setStructureLocked(!state.structureLocked)}
-              >
-                {state.structureLocked ? "Unlock structure" : "Lock structure"}
-              </Button>
-              <p className="text-[10px] text-neutral-400">
-                {state.document.width} × {state.document.height} px
-              </p>
-            </Panel>
-            <PlaceholdersPanel controller={controller} state={state} />
+          <ToolRail controller={controller} activeTool={state.tool} />
+        )}
+
+        {preview ? null : (
+          <aside className="editor-scroll w-[280px] shrink-0 overflow-y-auto border-r border-rule bg-paper">
+            <ContextPanel
+              step={step}
+              controller={controller}
+              state={state}
+              onOpenGridSettings={() => setGridOpen(true)}
+              onOpenPageSettings={() => setPageSettingsOpen(true)}
+              onFillAndPrint={handleFillAndPrint}
+              onSave={handleSave}
+              onShare={handleShare}
+            />
           </aside>
         )}
 
@@ -214,15 +386,15 @@ export default function BillEditor() {
             ) : null}
           </div>
 
-          {preview ? null : <StatusBar controller={controller} state={state} />}
+          {preview ? null : <StageBar controller={controller} state={state} />}
         </div>
 
         {preview ? null : (
-          <aside className="flex w-64 shrink-0 flex-col border-l border-neutral-200 bg-white">
+          <aside className="flex w-80 shrink-0 flex-col border-l border-rule bg-paper">
             <div className="editor-scroll min-h-0 flex-1 overflow-y-auto">
               <PropertiesPanel controller={controller} state={state} />
             </div>
-            <div className="h-56 shrink-0 border-t border-neutral-200">
+            <div className="h-56 shrink-0 border-t border-rule">
               <LayersPanel
                 controller={controller}
                 state={state}
@@ -246,7 +418,110 @@ export default function BillEditor() {
           onClose={() => setGridOpen(false)}
         />
       ) : null}
+      {pageSettingsOpen ? (
+        <PageSettingsDialog
+          document={state.document}
+          onApply={(width, height) => {
+            controller.setDocument(width, height);
+            setPageSettingsOpen(false);
+          }}
+          onClose={() => setPageSettingsOpen(false)}
+        />
+      ) : null}
     </div>
+  );
+}
+
+const PAGE_PRESETS = [
+  { value: "custom", label: "Custom size" },
+  { value: "a4", label: "A4 · 210 × 297 mm" },
+  { value: "letter", label: "US Letter · 8.5 × 11 in" },
+  { value: "receipt58", label: "Receipt · 58 mm wide" },
+  { value: "receipt80", label: "Receipt · 80 mm wide" },
+] as const;
+type PagePreset = (typeof PAGE_PRESETS)[number]["value"];
+type PageUnit = "mm" | "in" | "px";
+const PX_PER_INCH = 96;
+const pxToUnit = (px: number, unit: PageUnit) =>
+  unit === "mm" ? (px * 25.4) / PX_PER_INCH : unit === "in" ? px / PX_PER_INCH : px;
+const unitToPx = (value: number, unit: PageUnit) =>
+  unit === "mm" ? (value * PX_PER_INCH) / 25.4 : unit === "in" ? value * PX_PER_INCH : value;
+
+function PageSettingsDialog({
+  document,
+  onApply,
+  onClose,
+}: {
+  document: { width: number; height: number };
+  onApply: (width: number, height: number) => void;
+  onClose: () => void;
+}) {
+  const [widthPx, setWidthPx] = useState(document.width);
+  const [heightPx, setHeightPx] = useState(document.height);
+  const [unit, setUnit] = useState<PageUnit>("mm");
+  const [preset, setPreset] = useState<PagePreset>("custom");
+  const setPresetSize = (next: PagePreset) => {
+    setPreset(next);
+    const sizes: Partial<Record<PagePreset, [number, number]>> = {
+      a4: [794, 1123],
+      letter: [816, 1056],
+      receipt58: [219, 1200],
+      receipt80: [302, 1600],
+    };
+    const size = sizes[next];
+    if (size) {
+      setWidthPx(size[0]);
+      setHeightPx(size[1]);
+    }
+  };
+  const width = pxToUnit(widthPx, unit);
+  const height = pxToUnit(heightPx, unit);
+  const valid =
+    Number.isFinite(widthPx) && Number.isFinite(heightPx) &&
+    widthPx >= 100 && heightPx >= 100 && widthPx <= 20000 && heightPx <= 20000;
+
+  return (
+    <Dialog
+      open
+      title="Page size & layout"
+      description="Dimensions use 96 px per inch. Changing page size resizes the tracing reference to the new page."
+      onClose={onClose}
+      width="w-[420px]"
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" disabled={!valid} onClick={() => onApply(widthPx, heightPx)}>
+            Apply page size
+          </Button>
+        </>
+      }
+    >
+      <Field label="Page preset">
+        <Select value={preset} onChange={(v) => setPresetSize(v as PagePreset)} options={[...PAGE_PRESETS]} />
+      </Field>
+      <Field label="Enter dimensions in">
+        <Select
+          value={unit}
+          onChange={(v) => setUnit(v as PageUnit)}
+          options={[
+            { value: "mm", label: "Millimetres" },
+            { value: "in", label: "Inches" },
+            { value: "px", label: "Pixels" },
+          ]}
+        />
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={`Width (${unit})`}>
+          <NumberInput value={Math.round(width * 100) / 100} min={unit === "px" ? 100 : 25} max={unit === "px" ? 20000 : 5292} step={0.1} onChange={(v) => { setWidthPx(unitToPx(v, unit)); setPreset("custom"); }} />
+        </Field>
+        <Field label={`Height (${unit})`}>
+          <NumberInput value={Math.round(height * 100) / 100} min={unit === "px" ? 100 : 25} max={unit === "px" ? 20000 : 5292} step={0.1} onChange={(v) => { setHeightPx(unitToPx(v, unit)); setPreset("custom"); }} />
+        </Field>
+      </div>
+      <p className="text-[12px] text-ink-faint">
+        Current page: {Math.round(widthPx)} × {Math.round(heightPx)} px. Receipt presets use a practical starter height; increase it for longer forms.
+      </p>
+    </Dialog>
   );
 }
 
@@ -335,74 +610,10 @@ function GridSettingsDialog({
           onChange={(v) => controller.setFullSpanRules(v)}
         />
       </div>
-      <p className="text-[10px] text-neutral-400">
+      <p className="text-[12px] text-ink-faint">
         Snap rounds the top-left corner of an object to the nearest grid line
         while it is dragged.
       </p>
     </Dialog>
   );
 }
-
-function StatusBar({
-  controller,
-  state,
-}: {
-  controller: ReturnType<typeof useEditorController>["controller"];
-  state: ReturnType<typeof useEditorController>["state"];
-}) {
-  return (
-    <div className="flex items-center gap-3 border-t border-neutral-200 bg-white px-3 py-1.5 text-[11px] text-neutral-500">
-      <span className="tabular-nums">
-        Zoom: <span className="font-medium text-neutral-700">{Math.round(state.zoom * 100)}%</span>
-      </span>
-      <span className="tabular-nums">
-        Document:{" "}
-        <span className="font-medium text-neutral-700">
-          {state.document.width} × {state.document.height}
-        </span>
-      </span>
-      <span className="tabular-nums">
-        Objects:{" "}
-        <span className="font-medium text-neutral-700">{state.objectCount}</span>
-      </span>
-      <span className="tabular-nums">
-        Selected:{" "}
-        <span className="font-medium text-neutral-700">{state.selection.length}</span>
-      </span>
-
-      {state.sampledColour ? (
-        <span className="flex items-center gap-1.5 tabular-nums">
-          <span
-            className="inline-block h-3 w-3 rounded-full border border-neutral-300"
-            style={{ backgroundColor: state.sampledColour }}
-          />
-          <span className="font-medium text-neutral-700">{state.sampledColour}</span>
-        </span>
-      ) : null}
-
-      <div className="flex-1" />
-
-      <div className="flex items-center gap-1">
-        <Button onClick={() => controller.zoomOut()} title="Zoom out">
-          −
-        </Button>
-        <Button onClick={() => controller.resetZoom()} title="Reset zoom to 100%">
-          100%
-        </Button>
-        <Button onClick={() => controller.zoomIn()} title="Zoom in">
-          +
-        </Button>
-        <Button
-          onClick={() => controller.fit()}
-          title="Fit the whole document in the pane"
-        >
-          Fit
-        </Button>
-      </div>
-      <span className="text-neutral-400">
-        Wheel to zoom · Space+drag to pan · Fit to reset
-      </span>
-    </div>
-  );
-}
-

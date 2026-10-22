@@ -56,6 +56,64 @@ describe("objectBox", () => {
   });
 });
 
+/**
+ * A save/reload must land on the same geometry it started from.
+ *
+ * `objectBox` used to derive the position from Fabric's `getCenterPoint()`,
+ * which is the *stroke-inclusive* midpoint, while subtracting a
+ * stroke-exclusive half-box. The two halves disagree by half a stroke, so every
+ * save added `strokeWidth / 2` to an object's x and y - and the undo snapshot
+ * serialises the same way, so a single undo/redo pair walked the whole bill
+ * across the page. The design tokens in `Variable_Test.json` (1.5px borders)
+ * moved by 0.75px each time.
+ */
+describe("objectBox is a fixed point across a save and reload", () => {
+  const shape = (extra: Record<string, unknown> = {}) =>
+    ({
+      id: "r1", type: "rect", name: "R", role: null,
+      x: 100, y: 50, width: 200, height: 80,
+      rotation: 0, opacity: 1, visible: true, locked: false, zIndex: 0, parentId: null,
+      stroke: "#000000", strokeWidth: 1.5, fill: "transparent", cornerRadius: 0,
+      ...extra,
+    }) as never;
+
+  const doc = { width: 800, height: 600 };
+
+  const reload = (objects: unknown) => {
+    const template = {
+      templateVersion: 2 as const,
+      document: doc,
+      meta: { name: "t", modifiedAt: "" },
+      objects: objects as never[],
+    };
+    return serialiseObjects(hydrateTemplate(template) as never, doc, "t").objects[0]!;
+  };
+
+  it("does not add half a stroke to the position", () => {
+    for (const strokeWidth of [0, 1.5, 4]) {
+      const back = reload([shape({ strokeWidth })]);
+      expect(back.x).toBeCloseTo(100, 5);
+      expect(back.y).toBeCloseTo(50, 5);
+    }
+  });
+
+  it("keeps the authored corner when the object is rotated", () => {
+    const back = reload([shape({ rotation: 30 })]);
+    expect(back.x).toBeCloseTo(100, 5);
+    expect(back.y).toBeCloseTo(50, 5);
+  });
+
+  it("does not walk the object over repeated saves", () => {
+    let objects: unknown[] = [shape()];
+    for (let round = 0; round < 4; round += 1) {
+      objects = [reload(objects)];
+    }
+    const back = objects[0] as { x: number; y: number };
+    expect(back.x).toBeCloseTo(100, 5);
+    expect(back.y).toBeCloseTo(50, 5);
+  });
+});
+
 describe("serialiseObject: shapes", () => {
   it("serialises a rectangle with full styling", () => {
     const out = serialiseObject(

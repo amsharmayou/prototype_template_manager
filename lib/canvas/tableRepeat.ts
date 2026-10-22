@@ -18,7 +18,7 @@ export function normaliseRepeat(
     repeatHeader: raw.repeatHeader === true,
     maxItems:
       typeof raw.maxItems === "number" && Number.isInteger(raw.maxItems) && raw.maxItems > 0
-        ? raw.maxItems
+        ? Math.min(DEFAULT_REPEAT_MAX_ITEMS, raw.maxItems)
         : DEFAULT_REPEAT_MAX_ITEMS,
   };
 }

@@ -1,49 +1,87 @@
 "use client";
 
 import { useCallback, useRef, useState } from "react";
+import { ImagePlus } from "lucide-react";
 
 import { Button } from "@/components/ui/Controls";
+import { useToast } from "@/components/ui/Toast";
+import { renderSampleBill } from "@/lib/client/sampleBill";
+import { readImageFile } from "@/lib/client/readImageFile";
+import { readTemplateFile } from "@/lib/client/readTemplateFile";
+import type { EditorDraft } from "@/lib/client/draftStore";
 import type { BillTemplate } from "@/lib/template/types";
 
 /**
- * First screen: pick a bill image from the local machine. Nothing is
- * uploaded; the file is read in the browser via FileReader.
+ * First screen: start from a bill photo, or open something made earlier.
+ * Nothing is uploaded; files are read in the browser via FileReader.
  */
 export default function UploadScreen({
   onImage,
   onTemplate,
   onTemplateForRender,
+  draft,
+  onResumeDraft,
+  onDiscardDraft,
 }: {
   onImage: (dataUrl: string, name: string) => void;
   onTemplate: (t: BillTemplate) => void;
   onTemplateForRender: (t: BillTemplate) => void;
+  draft: EditorDraft | null;
+  onResumeDraft: () => void;
+  onDiscardDraft: () => void;
 }) {
   const imageInput = useRef<HTMLInputElement | null>(null);
   const jsonInput = useRef<HTMLInputElement | null>(null);
   const renderInput = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
+  const { toast } = useToast();
 
   const readImage = useCallback(
-    (file: File) => {
-      if (!/^image\/(png|jpeg|webp)$/.test(file.type)) {
-        window.alert("Please choose a PNG, JPG or WebP image.");
-        return;
+    async (file: File) => {
+      try {
+        onImage(await readImageFile(file), file.name);
+      } catch (error) {
+        toast({
+          kind: "error",
+          title: "Could not open that picture",
+          detail: error instanceof Error ? error.message : String(error),
+        });
       }
-      const reader = new FileReader();
-      reader.onload = () => {
-        if (typeof reader.result === "string") {
-          onImage(reader.result, file.name);
-        }
-      };
-      reader.readAsDataURL(file);
     },
-    [onImage],
+    [onImage, toast],
   );
+
+  const readTemplate = useCallback(
+    async (file: File, hand: (t: BillTemplate) => void) => {
+      try {
+        hand(await readTemplateFile(file));
+      } catch (error) {
+        toast({
+          kind: "error",
+          title: "That file isn't a bill template",
+          detail: error instanceof Error ? error.message : "Choose a supported .json template file.",
+        });
+      }
+    },
+    [toast],
+  );
+
+  const useSample = useCallback(() => {
+    try {
+      onImage(renderSampleBill(), "Sample bill");
+    } catch (error) {
+      toast({
+        kind: "error",
+        title: "Could not draw the sample bill",
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [onImage, toast]);
 
   return (
     <div
       className={`flex min-h-screen items-center justify-center p-6 transition-colors ${
-        dragging ? "bg-blue-50" : "bg-neutral-100"
+        dragging ? "bg-ledger-wash" : "bg-desk"
       }`}
       onDragOver={(e) => {
         e.preventDefault();
@@ -57,29 +95,59 @@ export default function UploadScreen({
         if (file) readImage(file);
       }}
     >
-      <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white p-8 text-center shadow-sm">
-        <h1 className="text-xl font-semibold text-neutral-900">
+      <div className="w-full max-w-2xl">
+        <p className="font-display text-[13px] font-semibold tracking-wide text-ink-faint">
           Bill Template Maker
+        </p>
+        <h1 className="mt-2 font-display text-[28px] leading-tight font-semibold text-ink">
+          Turn your paper bill into a digital bill
         </h1>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-neutral-500">
-          Load a bill image, then manually trace its structure. The image is
-          kept as a faint, locked reference layer and is never part of the
-          exported template.
+        <p className="mt-2 max-w-prose text-[13px] leading-relaxed text-ink-soft">
+          Take a photo of your bill and trace over it once. After that you can
+          fill it in on screen, print it, and send it — as many times as you
+          like.
         </p>
 
-        <div className="mt-8 rounded-lg border-2 border-dashed border-neutral-300 bg-neutral-50 px-6 py-10">
-          <p className="text-base font-medium text-neutral-700">
-            Upload Bill Image
+        <div
+          className={`mt-6 rounded-xl border-2 border-dashed bg-paper p-8 text-center transition-colors ${
+            dragging ? "border-ledger" : "border-rule"
+          }`}
+        >
+          <ImagePlus aria-hidden className="mx-auto h-8 w-8 text-ink-faint" />
+          <p className="mt-3 text-[15px] font-medium text-ink">
+            Drop a photo of your bill here
           </p>
-          <p className="mt-1 text-xs text-neutral-400">
-            PNG / JPG / JPEG / WebP — processed entirely in your browser
+          <p className="mt-1 text-[12px] text-ink-soft">
+            PNG, JPG or WebP — the photo stays on your computer
           </p>
-          <div className="mt-5 flex items-center justify-center gap-2">
-            <Button variant="primary" onClick={() => imageInput.current?.click()}>
-              Choose File
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+            <Button
+              variant="primary"
+              size="lg"
+              onClick={() => imageInput.current?.click()}
+            >
+              Choose a photo
+            </Button>
+            <Button size="lg" onClick={useSample}>
+              Try a sample bill
             </Button>
           </div>
         </div>
+
+        {draft ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-ledger/30 bg-ledger-wash p-4">
+            <div>
+              <p className="text-[13px] font-medium text-ink">Draft ready to resume: {draft.name}</p>
+              <p className="mt-1 text-[11px] text-ink-soft">
+                Saved {draft.savedAt}. The tracing photo is not stored in the draft.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="primary" onClick={onResumeDraft}>Resume draft</Button>
+              <Button onClick={onDiscardDraft}>Discard</Button>
+            </div>
+          </div>
+        ) : null}
 
         <input
           ref={imageInput}
@@ -97,15 +165,10 @@ export default function UploadScreen({
           type="file"
           accept="application/json,.json"
           className="hidden"
-          onChange={async (e) => {
+          onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = "";
-            if (!file) return;
-            try {
-              onTemplate(JSON.parse(await file.text()) as BillTemplate);
-            } catch {
-              window.alert("That file is not a valid bill template JSON.");
-            }
+            if (file) void readTemplate(file, onTemplate);
           }}
         />
         <input
@@ -113,34 +176,34 @@ export default function UploadScreen({
           type="file"
           accept="application/json,.json"
           className="hidden"
-          onChange={async (e) => {
+          onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = "";
-            if (!file) return;
-            try {
-              onTemplateForRender(JSON.parse(await file.text()) as BillTemplate);
-            } catch {
-              window.alert("That file is not a valid bill template JSON.");
-            }
+            if (file) void readTemplate(file, onTemplateForRender);
           }}
         />
 
-        <div className="mt-6 flex flex-col items-center justify-center gap-2">
-          <Button onClick={() => jsonInput.current?.click()}>
-            Open saved template instead
-          </Button>
-          <Button variant="primary" onClick={() => renderInput.current?.click()}>
-            Fill &amp; Render a saved template
-          </Button>
-          <p className="max-w-sm text-center text-[10px] leading-relaxed text-neutral-400">
-            Picking from disk skips the editor and whisks this template into
-            the renderer, where its placeholders become a form.
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border border-rule bg-paper p-4">
+          <p className="text-[13px] font-medium text-ink">
+            Already made a template?
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={() => jsonInput.current?.click()}>
+              Open a saved template…
+            </Button>
+            <Button onClick={() => renderInput.current?.click()}>
+              Fill &amp; print a saved template…
+            </Button>
+          </div>
+          <p className="w-full text-[12px] leading-relaxed text-ink-soft">
+            Opening one from disk skips the tracing step and goes straight to
+            the form where you fill in the numbers.
           </p>
         </div>
 
-        <p className="mt-6 text-[11px] leading-relaxed text-neutral-400">
-          Nothing is uploaded to a server. No OCR or automatic interpretation is
-          performed — you decide what every line, box and text field means.
+        <p className="mt-4 text-[12px] leading-relaxed text-ink-faint">
+          Nothing is uploaded to a server, and nothing is guessed for you — you
+          decide what every line, box and field means.
         </p>
       </div>
     </div>
