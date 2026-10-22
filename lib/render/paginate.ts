@@ -220,12 +220,24 @@ export function paginate(
   const shiftedBottom = shifted.reduce((a, o) => Math.max(a, bottomOf(o)), 0);
 
   const flowPages = flowChunks.length;
-  const windowCount = Math.max(flowPages, Math.ceil(shiftedBottom / pageHeight));
+  // A pathological template (heights at 1e308, say) must not be sliced into an
+  // astronomic number of sheets - the cap doubles as the chunk cap in
+  // `chunkTable`, past which rows are clipped with a warning each.
+  const windowCount = Math.min(
+    500,
+    Math.max(flowPages, Math.ceil(shiftedBottom / pageHeight)),
+  );
+  if (windowCount === 500 && shiftedBottom > 500 * pageHeight) {
+    warnings.push(
+      `the content is far taller than ${500} pages; pagination is capped and content past the cap is clipped`,
+    );
+  }
 
   const pages: Array<{ objects: TemplateObject[]; top: number }> = [];
   for (let p = 0; p < windowCount; p += 1) {
     pages.push({ objects: [], top: p * pageHeight });
   }
+  if (pages.length === 0) pages.push({ objects: [], top: 0 });
 
   for (let ci = 0; ci < flowChunks.length; ci += 1) {
     const chunk = flowChunks[ci]!;
@@ -258,8 +270,13 @@ export function paginate(
       }
       continue;
     }
-    const centre = topOf(o) + (typeof o.height === "number" ? o.height : 0) / 2;
-    let page = Math.min(pages.length - 1, Math.max(0, Math.floor(centre / pageHeight)));
+    const half = typeof o.height === "number" && Number.isFinite(o.height) ? o.height / 2 : 0;
+    const centreRaw = topOf(o) + half;
+    // NaN coordinates from a hostile template default to page 0, where the
+    // painter's own finite-box refusal will drop them with a named refusal.
+    let page = Number.isFinite(centreRaw)
+      ? Math.min(pages.length - 1, Math.max(0, Math.floor(centreRaw / pageHeight)))
+      : 0;
     // Content that follows the flowing band cannot land before the band ends.
     if (flow !== null && topOf(o) >= topOf(flow)) {
       page = Math.max(page, Math.min(flowPages - 1, pages.length - 1));

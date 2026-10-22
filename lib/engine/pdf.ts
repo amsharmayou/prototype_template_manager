@@ -17,6 +17,15 @@ import { PDFDocument, PDFFont, rgb, type PDFImage } from "pdf-lib";
 import type { DisplayPaint, FontRef } from "./types";
 import { hasComplexScript, type FontBook } from "./fonts";
 
+/** One structured event, emitted once per PDF when a sink is supplied. */
+export interface PdfTelemetry {
+  kind: "pdf";
+  pages: number;
+  refusals: number;
+  bytes: number;
+  ms: number;
+}
+
 export interface WritePdfOptions {
   book: FontBook;
   /** Resolve an image source to raw bytes; pkg:// assets are resolved upstream. */
@@ -24,6 +33,8 @@ export interface WritePdfOptions {
   refuseComplexScript?: boolean;
   /** Text whose correct rendering needs a shaper that was not supplied. */
   title?: string;
+  /** PDF telemetry, Phase 4: called once per written document. */
+  telemetry?: (event: PdfTelemetry) => void;
 }
 
 export interface WritePdfResult {
@@ -63,6 +74,7 @@ export interface PdfPageInput {
 export async function writePdf(pagesInput: readonly PdfPageInput[], options: WritePdfOptions): Promise<WritePdfResult> {
   // Convenience: a single page stays a single argument shape.
   const lists: readonly PdfPageInput[] = pagesInput;
+  const t0 = performance.now();
   const refusals: string[] = [];
   const doc = await PDFDocument.create();
   doc.registerFontkit(fontkit);
@@ -238,5 +250,13 @@ export async function writePdf(pagesInput: readonly PdfPageInput[], options: Wri
   }
 
   const bytes = await doc.save({ useObjectStreams: false });
+  if (options.telemetry !== undefined) {
+    const sink = options.telemetry;
+    try {
+      sink({ kind: "pdf", pages: lists.length, refusals: refusals.length, bytes: bytes.length, ms: performance.now() - t0 });
+    } catch {
+      // A sink that throws must not take the print down with it.
+    }
+  }
   return { bytes, refusals };
 }

@@ -10,9 +10,11 @@
 
 import { unzipSync } from "fflate";
 
-import type { Bundle, PackageManifest, PackageOpen } from "./format";
-import { ENGINE_VERSION } from "./format";
+import { verifyManifestSignature } from "./signing";
 import { validateManifest } from "./validate";
+import { sha256HexBytes } from "../render/sha256";
+import type { Bundle, PackageManifest, PackageOpen } from "./format";
+import { ENGINE_VERSION, MANIFEST_SIGNATURE_MEMBER } from "./format";
 
 export * from "./format";
 
@@ -41,6 +43,22 @@ export interface OpenOptions {
   inflate?: Inflate;
   /** The engine release this host runs; defaults to this build's own. */
   engineVersion?: number;
+  /**
+   * Signature ingest, for hosts that trust a signing key.
+   *
+   * `required` refuses an unsigned bundle outright; otherwise a present
+   * signature is verified against the public key and a mismatch (or a bundle
+   * claiming an envelope its archive does not carry) refuses with a named
+   * reason. Node runtimes verify Ed25519 signatures; browser hosts deploy-verify
+   * server-side.
+   */
+  verify?: {
+    publicKeyPem: string;
+    /** The trusted `signature.keyId`, when the host pins one. */
+    keyId?: string;
+    /** Refuse bundles that carry no signature at all. */
+    required?: boolean;
+  };
 }
 
 export interface OpenedBundle {
@@ -91,21 +109,68 @@ export async function openBundle(
   }
 
   const digest = files.get("manifest.json.sha256");
-  if (!digest) {
+  // An unsigned bundle needs the sha sibling to be verifiable at all. A
+  // signed bundle needs no sibling: its signature covers the manifest bytes,
+  // which is the stronger fact, and the signature check below does the work.
+  if (!digest && options.verify === undefined) {
     refusals.push("the archive carries no manifest.json.sha256, so the manifest itself cannot be verified");
   }
   const manifestSha = digest
     ? new TextDecoder().decode(digest).trim().split(/\s+/)[0]
     : undefined;
+
+  // Migration, v1 -> v2, in memory only: an older bundle carries no engine
+  // version and no template identity, and both are derived rather than
+  // invented - the engine that understands v1 fields is this one, and the
+  // template bytes are in the archive. Checksums already carried by v1
+  // manifests keep doing their job; a v1 archive missing them still refuses.
+  const manifestRecord = manifest as Record<string, unknown>;
+  const declaredVersion = manifestRecord.packageVersion;
+  if (declaredVersion === 1) {
+    const templateMember = files.get(
+      typeof manifestRecord.template === "string" ? manifestRecord.template : "template.json",
+    );
+    if (!manifestRecord.engineVersion) manifestRecord.engineVersion = 1;
+    if (!manifestRecord.templateSha256 && templateMember) {
+      manifestRecord.templateSha256 = sha256HexBytes(templateMember);
+    }
+  }
+
   // The validator sees the archive the way `parsePackage` serves it: the
   // manifest members sit outside `files`, since a file cannot checksum itself
-  // and the manifest digest travels beside it instead.
+  // and the manifest digest travels beside it instead. The signature member is
+  // the third self-referential member: it signs the manifest and cannot
+  // checksum itself either.
   const validatorFiles = new Map(files);
   validatorFiles.delete("manifest.json");
   validatorFiles.delete("manifest.json.sha256");
+  validatorFiles.delete(MANIFEST_SIGNATURE_MEMBER);
   const issues = validateManifest(manifest, validatorFiles, manifestBytes, manifestSha);
   for (const issue of issues) {
     if (issue.severity === "error") refusals.push(`${issue.path}: ${issue.message}`);
+  }
+
+  // Signature ingest, when the host trusts a key. An optional verify on a
+  // present signature; a required verify on its absence; a failure under an
+  // envelope that lies. All three refuse before anything renders.
+  const verify = options.verify;
+  if (verify !== undefined) {
+    const sigBytes = files.get(MANIFEST_SIGNATURE_MEMBER);
+    if (!sigBytes) {
+      refusals.push(
+        verify.required === true
+          ? "the bundle is not signed and this host requires a signature"
+          : "the bundle names a signature the archive does not carry",
+      );
+    } else {
+      const verdict = await verifyManifestSignature(
+        manifestBytes,
+        sigBytes,
+        verify.publicKeyPem,
+        verify.keyId,
+      );
+      if (!verdict.ok) refusals.push(`signature: ${verdict.reason ?? "invalid"}`);
+    }
   }
 
   const engineVersion = (manifest as { engineVersion?: number }).engineVersion ?? 1;

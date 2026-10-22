@@ -14,7 +14,6 @@
  * printing the way the browser preview already looks.
  */
 
-import type { FontRef } from "./types";
 
 /** One shaped glyph: IDs and metrics in font units. */
 export interface ShapedGlyphUnits {

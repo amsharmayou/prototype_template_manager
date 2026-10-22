@@ -172,6 +172,16 @@ export interface ComputedSpec {
   roundTo?: number;
 }
 
+/** The manifest's signature block: who signed it and with what. */
+export interface PackageSignature {
+  alg: "ed25519";
+  /** Identifies the trusted key the host verified against. */
+  keyId: string;
+}
+
+/** The archive member that carries the signature bytes of `manifest.json`. */
+export const MANIFEST_SIGNATURE_MEMBER = "manifest.json.sig";
+
 export interface PackageManifest {
   packageVersion: typeof PACKAGE_VERSION;
   templateVersion: number;
@@ -184,10 +194,10 @@ export interface PackageManifest {
   fields: ManifestField[];
   computed: ComputedSpec[];
   /**
-   * Engine release the bundle was written for. A host refuses to open a bundle
-   * that needs a newer engine than it runs; absence (v1 packages) means the
-   * bundle predates versioning and every field it uses must be one an engine
-   * of record 1 understands anyway.
+   * Engine release the bundle was written for. A host refuses a bundle that
+   * needs a newer engine than it runs; absence (v1 packages) means the bundle
+   * predates versioning and every field it uses must be one an engine of
+   * record 1 understands anyway.
    */
   engineVersion?: number;
   /**
@@ -197,6 +207,8 @@ export interface PackageManifest {
    * at open time. Required from packageVersion 2.
    */
   templateSha256?: string;
+  /** Signature block, present when the bundle was signed at build or ship time. */
+  signature?: PackageSignature;
   /** SHA-256 per archive file, keyed by that path. */
   checksums: Record<string, string>;
 }

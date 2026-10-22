@@ -38,6 +38,8 @@ export interface RenderDocumentOptions {
   remeasure?: RenderOptions["remeasure"];
   /** Whether unfilled slots paint at all. Default "hide". */
   placeholders?: "hide" | "show";
+  /** Render telemetry, Phase 4: called once per render with the counts. */
+  telemetry?: (event: RenderTelemetry) => void;
 }
 
 /**
@@ -62,12 +64,13 @@ export function renderDocument(
   // print: a grand figure that sums the band's line figure sums the engine's
   // `count x rate`, and a hand-typed line figure can no longer disagree with
   // the sum under it.
+  const t0 = performance.now();
   const augmented = withRowsComputed(template, options.computed ?? [], values, scale, computeOpts);
   const derived = computeAll(options.computed ?? [], augmented, scale, computeOpts);
   const shown = applyDisplayFormats({ ...values, ...derived }, options.display ?? {});
   const bound = fillTemplate(template, shown);
 
-  return renderHtml(bound, shown, {
+  const result = renderHtml(bound, shown, {
     ...(options.title !== undefined ? { title: options.title } : {}),
     bandSpecs: options.computed ?? [],
     currencyScale: scale,
@@ -81,4 +84,33 @@ export function renderDocument(
       Array.isArray(options.computed) ? options.computed : undefined,
     ),
   });
+
+  // Telemetry, when a host asks for it: one structured event per render, with
+  // the counts a refusal-rate dashboard reads. The sink never throws into the
+  // render path - a misbehaving listener is the listener's problem.
+  if (options.telemetry !== undefined) {
+    const sink = options.telemetry;
+    try {
+      sink({
+        kind: "render",
+        pages: result.pages.length,
+        warnings: [...result.warnings],
+        refusals: result.refusals.length,
+        ms: performance.now() - t0,
+      });
+    } catch {
+      // A host sink that throws must not take the bill down with it.
+    }
+  }
+  return result;
+}
+
+/** One structured event, emitted once per render when a sink is supplied. */
+export interface RenderTelemetry {
+  kind: "render";
+  pages: number;
+  /** Warning texts, verbatim, for aggregation on the host side. */
+  warnings: string[];
+  refusals: number;
+  ms: number;
 }
