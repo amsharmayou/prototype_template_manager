@@ -261,9 +261,15 @@ function clampOpacity(v: number): number {
 }
 
 /**
- * Fit the full reference image inside the document without changing its
- * aspect ratio. Called after page size changes and template reloads so tracing
- * stays aligned without distorting the bill artwork.
+ * Re-map the reference onto the document exactly: left 0, top 0, both axes
+ * scaled to the page, so the underlay is pinned to the sheet corner to corner.
+ *
+ * Two flows guarantee this stays distortion-free in practice. When a photo is
+ * first attached, the page *adopts* the image's natural size (uniform scale
+ * 1); on every later rebinding - a template load, a page resize - the page has
+ * its own fixed size, and the underlay follows it rather than floating
+ * centred: a stranded, centred image is how tracing drifts by an inch after a
+ * reload.
  */
 export function fitTo(
   ref: ReferenceHandle,
@@ -271,16 +277,13 @@ export function fitTo(
 ): void {
   const nw = ref.width || 1;
   const nh = ref.height || 1;
-  const scale = Math.min(doc.width / nw, doc.height / nh);
-  const width = nw * scale;
-  const height = nh * scale;
   ref.image.set({
-    left: (doc.width - width) / 2,
-    top: (doc.height - height) / 2,
+    left: 0,
+    top: 0,
     originX: "left",
     originY: "top",
-    scaleX: scale,
-    scaleY: scale,
+    scaleX: doc.width / nw,
+    scaleY: doc.height / nh,
   } as never);
   ref.image.setCoords();
 }

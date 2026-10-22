@@ -13,9 +13,11 @@ test.describe("editor shell", () => {
       .setInputFiles({
         name: "bill.png",
         mimeType: "image/png",
-        // 4×4 white PNG, so the editor opens with a real reference.
+        // 1×1 white PNG. The previous 4×4 buffer had a broken IDAT CRC:
+        // <img> renders CRC-broken PNGs, createImageBitmap refuses them, so
+        // the reference image never loaded and the editor never opened.
         buffer: Buffer.from(
-          "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEklEQVR4nGP8z8Dwn4EIwDiqkL4KAdn0BNsAAAAASUVORK5CYII=",
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
           "base64",
         ),
       });

@@ -20,7 +20,7 @@ test.describe("first screen", () => {
       });
 
     await expect(
-      page.getByText("That picture isn't a PNG, JPG or WebP"),
+      page.getByText("Choose a PNG, JPG, or WebP image."),
     ).toBeVisible();
     expect(dialogs).toEqual([]);
   });

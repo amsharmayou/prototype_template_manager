@@ -4,7 +4,6 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const vendorIndex = resolve("Admin/server/vendor/billkit-format/index.ts");
-const sourceIndex = resolve("version 1/lib/billkit/index.ts"); // proxy
 
 const vendorExports = new Set();
 try {

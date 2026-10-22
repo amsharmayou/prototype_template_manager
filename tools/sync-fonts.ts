@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copy the bundled open-licence fonts from their npm sources into
  * `assets/fonts/` (repository bytes) and `public/fonts/` (runtime fetches).
  *
@@ -7,7 +7,7 @@
  * Caladea/Cambria, plus Noto Sans and Noto Sans Devanagari for the scripts
  * the Latin four do not cover. Licences travel beside the files.
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 interface BundledFont {

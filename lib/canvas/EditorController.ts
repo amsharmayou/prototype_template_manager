@@ -2537,8 +2537,48 @@ if (opt.target instanceof BillTable) opt.target.endResizeGesture();
     if (!canvas) return;
     const objs = this.tracedObjects().filter((o) => !this.isLocked(o));
     if (objs.length === 0) return;
-    if (objs.length === 1) canvas.setActiveObject(objs[0]!);
-    else canvas.setActiveObject(new ActiveSelection(objs, { canvas }));
+    if (objs.length === 1) {
+      canvas.setActiveObject(objs[0]!);
+      canvas.requestRenderAll();
+      this.refresh();
+      return;
+    }
+    // Fabric's multi-selection layout rebases every child transform into the
+    // selection's own space, and that rebase reads through the viewport: with
+    // the page panned or zoomed, entering a multi-selection rewrites each
+    // child's left/top with screen-space numbers, so the saved template (and
+    // the print) inherit coordinates the sheet never had. Grouping here is
+    // metadata - the selection is transient - so each child's transform is
+    // saved before selection and restored after, keeping scene coordinates
+    // exactly as authored.
+    const before = objs.map((o) => ({
+      o,
+      left: o.left,
+      top: o.top,
+      scaleX: o.scaleX,
+      scaleY: o.scaleY,
+      angle: o.angle,
+    }));
+    canvas.setActiveObject(new ActiveSelection(objs, { canvas }));
+    for (const saved of before) {
+      const o = saved.o;
+      if (
+        o.left !== saved.left ||
+        o.top !== saved.top ||
+        o.scaleX !== saved.scaleX ||
+        o.scaleY !== saved.scaleY ||
+        o.angle !== saved.angle
+      ) {
+        o.set({
+          left: saved.left,
+          top: saved.top,
+          scaleX: saved.scaleX,
+          scaleY: saved.scaleY,
+          angle: saved.angle,
+        });
+        o.setCoords();
+      }
+    }
     canvas.requestRenderAll();
     this.refresh();
   }
