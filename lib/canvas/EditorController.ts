@@ -41,6 +41,7 @@ import type {
 import { normaliseRepeat } from "@/lib/canvas/tableRepeat";
 import { interiorGridLevels } from "@/lib/canvas/tableGrid";
 import { FieldObject } from "@/lib/canvas/objects/BillField";
+import { CellFieldObject } from "@/lib/canvas/objects/BillCellField";
 import {
   groupObjects as groupObjectsIn,
   pruneGroups,
@@ -126,6 +127,7 @@ export type ToolId =
   | "image-placeholder"
   | "bill-part"
   | "field"
+  | "cell-field"
   | "eyedropper";
 
 export const TOOL_LABELS: Record<ToolId, string> = {
@@ -145,6 +147,7 @@ export const TOOL_LABELS: Record<ToolId, string> = {
   "image-placeholder": "Image Placeholder",
   "bill-part": "Bill Part",
   field: "Field",
+  "cell-field": "Cell Field",
   eyedropper: "Eyedropper",
 };
 
@@ -1107,6 +1110,9 @@ export class EditorController {
       case "field":
         this.beginField();
         break;
+      case "cell-field":
+        this.beginCellField();
+        break;
       case "table":
         // A zero-size sentinel raised on mouse-down so the canvas has
         // something to drag. `beginTableBox` then creates the real table, and
@@ -1201,6 +1207,11 @@ export class EditorController {
     if ((obj as unknown as { appType?: string }).appType === "bill-part") {
       this.setTool("select");
       this.finishBillPart(obj, box);
+      return;
+    }
+    if ((obj as unknown as { appType?: string }).appType === "cell-field") {
+      this.setTool("select");
+      this.finishCellField(obj, box);
       return;
     }
     if (isTable) {
@@ -1338,6 +1349,41 @@ export class EditorController {
       evented: false,
     } as never);
     this.tag(obj, "field", `Field ${count + 1}`);
+    canvas.add(obj);
+    this.drawing = obj;
+  }
+
+  /**
+   * The cell-field marker doubles as the Excel cell the author drew: draw it
+   * empty and the tool creates the container box in the same gesture; draw it
+   * inside an existing box and it binds there; draw it over a table cell and
+   * the cell itself becomes the field.
+   */
+  private beginCellField(): void {
+    const canvas = this.canvas;
+    if (!canvas || !this.drawOrigin) return;
+    const o = this.drawOrigin;
+    const count = this.tracedObjects().filter(
+      (x) => (x as unknown as { appType?: string }).appType === "cell-field",
+    ).length;
+    const key = `cell_${count + 1}`;
+    const obj = new CellFieldObject({
+      key,
+      fieldType: "text",
+      label: `{{${key}}}`,
+    });
+    obj.set({
+      left: o.x,
+      top: o.y,
+      width: 1,
+      height: 1,
+      selectable: false,
+      evented: false,
+      // Growth opt-in: the slot grows downward with its value, bounded by the
+      // page (the paginator carries the overflow to the next sheet).
+      expansion: { y: { mode: "unbounded" } },
+    } as never);
+    this.tag(obj, "cell-field", `Cell field ${count + 1}`);
     canvas.add(obj);
     this.drawing = obj;
   }
@@ -1516,6 +1562,210 @@ export class EditorController {
 
   /* ---------------------------------------------------------------- */
   /* Polygon                                                           */
+  /* ---------------------------------------------------------------- */
+
+  private finishCellField(
+    obj: FabricObject,
+    box: { x: number; y: number; width: number; height: number },
+  ): void {
+    const key = (obj as unknown as { key?: string }).key ?? "cell";
+    const canvas = this.canvas;
+
+    // 1. Bind to an enclosing rect/rounded-rect when the slot was drawn
+    // inside one (containment with a small tolerance, innermost wins).
+    const container = this.findEnclosingBoxContainer(obj, box, 12);
+    if (container) {
+      const rectId = this.getId(container);
+      const existing = (container as unknown as { container?: unknown }).container;
+      if (existing === undefined) {
+        container.set({
+          container: {
+            enabled: true,
+            growthX: "fixed",
+            growthY: "content",
+            padding: { top: 4, right: 4, bottom: 4, left: 4 },
+          },
+        } as never);
+      }
+      obj.set({
+        containerId: rectId,
+        layoutParentId: rectId,
+        left: container.left + 4,
+        top: container.top + 4,
+        width: container.width - 8,
+        height: container.height - 8,
+      } as never);
+      obj.setCoords();
+      this.commit("Add cell field");
+      this.selectFinished(obj);
+      return;
+    }
+
+    // 2. Apply to the table cell under the slot's centre: the cell carries
+    // the token, the table gains its growth policy, and the drawn marker is
+    // consumed - a bound table cell needs no marker object of its own.
+    const centreX = box.x + box.width / 2;
+    const centreY = box.y + box.height / 2;
+    if (this.applyCellFieldToTable(key, centreX, centreY)) {
+      canvas?.remove(obj);
+      this.commit("Add cell field");
+      this.setTool("select");
+      return;
+    }
+
+    // 3. Nothing underneath: the slot becomes its own Excel cell - the
+    // container box is drawn in the same gesture and the two are bound.
+    if (canvas) {
+      const count = this.tracedObjects().filter(
+        (x) => (x as unknown as { appType?: string }).appType === "cell-field",
+      ).length;
+      const rect = new Rect({
+        left: box.x,
+        top: box.y,
+        width: box.width,
+        height: box.height,
+        fill: "transparent",
+        stroke: "#000000",
+        strokeWidth: DEFAULT_STROKE_WIDTH,
+        rx: 0,
+        ry: 0,
+        originX: "left",
+        originY: "top",
+      });
+      rect.set({
+        container: {
+          enabled: true,
+          growthX: "fixed",
+          growthY: "content",
+          padding: { top: 4, right: 4, bottom: 4, left: 4 },
+        },
+      } as never);
+      this.tag(rect, "rect", `Box ${count + 1}`);
+      canvas.add(rect);
+      obj.set({
+        containerId: this.getId(rect),
+        layoutParentId: this.getId(rect),
+      } as never);
+      obj.setCoords();
+      canvas.requestRenderAll();
+      this.commit("Add cell field");
+      this.selectFinished(obj);
+      return;
+    }
+    this.commit("Add cell field");
+  }
+
+  /**
+   * The innermost rect/rounded-rect whose bounds contain the drawn box.
+   *
+   * Tolerance forgives a slot drawn hard against the frame; innermost wins
+   * so nested boxes resolve to the box the author actually drew inside.
+   */
+  private findEnclosingBoxContainer(
+    drawn: FabricObject,
+    box: { x: number; y: number; width: number; height: number },
+    tolerance: number,
+  ): FabricObject | undefined {
+    const canvas = this.canvas;
+    if (!canvas) return undefined;
+    const contains = (b: { left: number; top: number; width: number; height: number }): boolean =>
+      box.x >= b.left - tolerance &&
+      box.y >= b.top - tolerance &&
+      box.x + box.width <= b.left + b.width + tolerance &&
+      box.y + box.height <= b.top + b.height + tolerance;
+    let best: FabricObject | undefined;
+    let bestArea = Number.POSITIVE_INFINITY;
+    for (const o of canvas.getObjects()) {
+      if (o === drawn) continue;
+      const kind = (o as unknown as { appType?: string }).appType ?? o.type;
+      const kindName = typeof kind === "string" ? kind.toLowerCase() : "";
+      if (kindName !== "rect" && kindName !== "rounded-rect") continue;
+      const b = {
+        left: o.left ?? 0,
+        top: o.top ?? 0,
+        width: o.width ?? 0,
+        height: o.height ?? 0,
+      };
+      if (!contains(b)) continue;
+      const area = b.width * b.height;
+      if (area < bestArea) {
+        best = o;
+        bestArea = area;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Apply a cell field to the table cell containing (`cx`, `cy`).
+   *
+   * The band's data row carries the repeated value, so a drop inside a band
+   * data row writes the band-prefixed token (`items.cell_1`); anywhere else
+   * writes the plain token (`cell_1`). Either way the table opts into row
+   * growth, which is what makes the cell behave like Excel's: the row grows
+   * when the filled value wraps past the traced height.
+   */
+  private applyCellFieldToTable(key: string, cx: number, cy: number): boolean {
+    const canvas = this.canvas;
+    if (!canvas) return false;
+    for (const o of canvas.getObjects()) {
+      const appType = (o as unknown as { appType?: string }).appType;
+      if (appType !== "table") continue;
+      const left = o.left ?? 0;
+      const top = o.top ?? 0;
+      const width = o.width ?? 0;
+      const height = o.height ?? 0;
+      if (cx < left || cx > left + width || cy < top || cy > top + height) continue;
+
+      const table = o as unknown as {
+        columns: number;
+        colWidths: number[];
+        rowHeights: number[];
+        cells: Array<{ text: string }>;
+        repeat?: { key: string; startRow: number; endRow: number };
+      };
+      const columns = Math.max(1, table.columns);
+      const colWidths = Array.isArray(table.colWidths) ? table.colWidths : [];
+      const rowHeights = Array.isArray(table.rowHeights) ? table.rowHeights : [];
+
+      let col = 0;
+      let acc = left;
+      for (const w of colWidths) {
+        if (cx <= acc + w) break;
+        acc += w;
+        col += 1;
+      }
+      let row = 0;
+      acc = top;
+      for (const h of rowHeights) {
+        if (cy <= acc + h) break;
+        acc += h;
+        row += 1;
+      }
+      row = Math.min(row, Math.max(0, rowHeights.length - 1));
+      col = Math.min(col, Math.max(0, columns - 1));
+
+      const band = table.repeat;
+      const isBandDataRow = band !== undefined && row >= band.startRow;
+      const token = isBandDataRow ? `{{${band.key}.${key}}}` : `{{${key}}}`;
+      const index = row * columns + col;
+      const cells = Array.isArray(table.cells) ? [...table.cells] : [];
+      if (index < cells.length) {
+        cells[index] = { ...cells[index]!, text: token };
+      } else {
+        cells[index] = { text: token };
+      }
+      o.set({
+        cells,
+        expansion: { y: { mode: "unbounded" } },
+      } as never);
+      o.setCoords();
+      canvas.requestRenderAll();
+      return true;
+    }
+    return false;
+  }
+
   /* ---------------------------------------------------------------- */
 
   private finishBillPart(

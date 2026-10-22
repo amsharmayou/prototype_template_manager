@@ -28,7 +28,7 @@ export type FieldType =
   | "checkbox"
   | "image";
 
-export type FieldSource = "text" | "table" | "image-placeholder" | "field";
+export type FieldSource = "text" | "table" | "image-placeholder" | "field" | "cell-field";
 
 export interface TemplateField {
   /** Form key, e.g. `customer_name` or `logo`. */
@@ -177,6 +177,9 @@ export function extractTemplateFields(template: BillTemplate): TemplateField[] {
       add(o.placeholderRole, "image-placeholder", o.name);
     } else if (o.type === "field") {
       add(o.key, "field", o.name, declaredFieldType(o.fieldType));
+    } else if (o.type === "cell-field") {
+      // A cell field binds its key to whole-box input, exactly as a field does.
+      add(o.key, "cell-field", o.name, declaredFieldType(o.fieldType));
     }
   }
   return fields;
@@ -231,7 +234,7 @@ export function extractFillableFields(
   const repeatColumns = new Set<string>();
   const outsideRepeat = new Set<string>();
   for (const object of template.objects) {
-    if (object.type === "text" || object.type === "field") {
+    if (object.type === "text" || object.type === "field" || object.type === "cell-field") {
       for (const key of extractVariables(object.text)) outsideRepeat.add(key);
     } else if (object.type === "table") {
       for (let row = 0; row < object.rows; row += 1) {
@@ -381,7 +384,7 @@ export function fillTemplate(
   }
 
   const objects = template.objects.map((o): TemplateObject => {
-    if (o.type === "text" || o.type === "field") {
+    if (o.type === "text" || o.type === "field" || o.type === "cell-field") {
       const pure = PURE_TOKEN.exec(typeof o.text === "string" ? o.text : "");
       const spec = pure ? byKey.get(pure[1]!) : undefined;
       return {

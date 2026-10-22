@@ -23,6 +23,7 @@ export type ObjectType =
   | "table"
   | "image-placeholder"
   | "field"
+  | "cell-field"
   | "group"
   | "bill-part";
 
@@ -333,6 +334,7 @@ export type TemplateObject =
   | ImagePlaceholderObject
   | BillPartObject
   | FieldObject
+  | CellFieldObject
   | GroupObject;
 
 export interface TemplateDocument {
@@ -435,6 +437,56 @@ export interface AxisExpansion {
 export interface ObjectExpansion {
   x: AxisExpansion;
   y: AxisExpansion;
+}
+
+/**
+ * A cell field: a dynamic value slot that fills a whole box the way an
+ * Excel cell does.
+ *
+ * The slot is *bounded by the box it belongs to* - it wraps inside the
+ * container's inner area (container width minus its own padding) and paints
+ * nothing outside it. Growth is the Excel behaviour the author picked: the
+ * box is a minimum, data longer than the space grows the box downward
+ * (`expansion.y` unbounded under a container with `growthY: "content"`), and
+ * the sheet pagination carries the overflow to the next page. A container run
+ * in "fixed" mode clips instead, with the overflow reported.
+ *
+ * Two placements:
+ * - `containerId` set: the slot fills that rect/rounded-rect (the box paints
+ *   its own stroke and fill; the cell field paints only the value).
+ * - No container: the slot is its own Excel cell - it paints its own light
+ *   border and fill, and grows itself.
+ */
+export interface CellFieldObject extends TemplateObjectBase {
+  type: "cell-field";
+  /** The form key whose value paints here. */
+  key: string;
+  /** Input kind produced on `/render` and in the share kit. */
+  fieldType: FieldType;
+  /** Always `{{key}}`; fillTemplate treats it like a text token. */
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: "normal" | "bold";
+  fontStyle: "normal" | "italic";
+  textAlign: TextAlign;
+  lineHeight: number;
+  charSpacing: number;
+  /** Vertical alignment inside the box - Excel cells default to the middle. */
+  textVerticalAlign: "top" | "middle" | "bottom";
+  /** Inner padding between the value and the box edges. */
+  padding: number;
+  /** Excel wrap on/off. Default on: the value wraps inside the box. */
+  wrap: boolean;
+  /** The box this field fills (null = the field is its own box). */
+  containerId: string | null;
+  roleKind: "variable";
+  /**
+   * Growth policy. The tool sets `y: unbounded` so a value longer than the
+   * box grows the box downward under a container with `growthY: "content"`;
+   * a capped container clips the overflow and the overflow is reported.
+   */
+  expansion?: ObjectExpansion;
 }
 
 /**

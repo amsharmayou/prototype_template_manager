@@ -50,6 +50,7 @@ export interface FormSchema {
 const GROUP_TITLES: Record<ManifestField["source"], string> = {
   text: "Text fields",
   field: "Text fields",
+  "cell-field": "Cell fields",
   table: "Table cells",
   "image-placeholder": "Images & signatures",
 };

@@ -631,6 +631,29 @@ export function renderObject(
         placeholders,
       );
     }
+    case "cell-field": {
+      // A cell field fills the box it is bound to (a rect the author drew),
+      // and that box paints its own stroke and fill - the cell field paints
+      // only the value, wrapped inside the box's inner area and clipped to
+      // it. The box height is what the solver settled on: grown when the
+      // value was longer than the space, capped where the author capped it.
+      const o2 = o as unknown as TextObject & { wrap?: boolean; textVerticalAlign?: "top" | "middle" | "bottom" };
+      return renderText(
+        {
+          ...o2,
+          wrapWidth: o2.width,
+          textVerticalAlign: o2.textVerticalAlign ?? "middle",
+        },
+        index,
+        values,
+        r,
+        // `overflow: hidden` is the boundary guarantee: the box is exactly as
+        // tall as the solver settled (grown for a longer value, capped where
+        // the author capped it), so nothing paints outside the Excel cell.
+        ["overflow: hidden"],
+        placeholders,
+      );
+    }
     case "table":
       return renderTable(o, index, values, r, placeholders);
     case "image-placeholder":

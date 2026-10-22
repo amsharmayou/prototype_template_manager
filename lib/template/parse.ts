@@ -3,7 +3,7 @@ import { TEMPLATE_VERSION, type BillTemplate } from "./types";
 
 const OBJECT_TYPES = new Set([
   "line", "rect", "rounded-rect", "ellipse", "polygon", "freehand",
-  "text", "hr", "vr", "table", "image-placeholder", "field", "group", "bill-part",
+  "text", "hr", "vr", "table", "image-placeholder", "field", "cell-field", "group", "bill-part",
 ]);
 const MAX_PAGE_PX = 20_000;
 const MAX_OBJECT_COORDINATE = 100_000;

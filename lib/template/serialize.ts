@@ -15,6 +15,7 @@ import type {
   AxisExpansion,
   BillPartObject,
   BillTemplate,
+  CellFieldObject,
   ContainerPolicy,
   FieldObject,
   FreehandObject,
@@ -505,6 +506,42 @@ function serialiseField(o: SerialisableObject, zIndex: number): FieldObject {
   };
 }
 
+/**
+ * A cell field serialises like a field, plus the binding that makes it an
+ * Excel cell: the box it fills (`containerId`), its inner padding and its
+ * vertical alignment.
+ *
+ * `containerId` is dropped when null - an unbound cell field is its own box
+ * and needs no pointer. The canvas tint stays behind (same rule as the
+ * field's tint above): the template carries the value's ink.
+ */
+function serialiseCellField(o: SerialisableObject, zIndex: number): CellFieldObject {
+  const key = str(o.key, "cell");
+  const growth = readExpansion(o.expansion);
+  const containerId = str(o.containerId, "");
+  return {
+    ...baseFields(o, zIndex),
+    type: "cell-field",
+    fill: str(o.textColor, "#000000") || "#000000",
+    key,
+    fieldType: str(o.fieldType, "text") as CellFieldObject["fieldType"],
+    text: `{{${key}}}`,
+    fontFamily: str(o.fontFamily, "Arial"),
+    fontSize: num(o.fontSize, 14),
+    fontWeight: str(o.fontWeight, "normal") === "bold" ? "bold" : "normal",
+    fontStyle: str(o.fontStyle, "normal") === "italic" ? "italic" : "normal",
+    textAlign: str(o.textAlign, "left") as CellFieldObject["textAlign"],
+    lineHeight: num(o.lineHeight, 1.16),
+    charSpacing: num(o.charSpacing, 0),
+    roleKind: "variable",
+    textVerticalAlign: str(o.textVerticalAlign, "middle") as CellFieldObject["textVerticalAlign"],
+    padding: num(o.padding, 6),
+    wrap: o.wrap !== false,
+    containerId: containerId.length > 0 ? containerId : null,
+    ...(growth === undefined ? {} : { expansion: growth }),
+  };
+}
+
 function serialiseLine(o: SerialisableObject, zIndex: number): LineObject {
   const base = baseFields(o, zIndex);
   // Both endpoints come from the object's own geometry, never from
@@ -591,6 +628,8 @@ export function serialiseObject(
       return serialiseBillPart(o, zIndex);
     case "field":
       return serialiseField(o, zIndex);
+    case "cell-field":
+      return serialiseCellField(o, zIndex);
     case "itext":
     case "textbox":
     case "text":

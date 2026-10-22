@@ -21,12 +21,14 @@ import {
 import { BillTable } from "@/lib/canvas/objects/BillTable";
 import { BillPartObject } from "@/lib/canvas/objects/BillPartObject";
 import { FieldObject, DEFAULT_FIELD } from "@/lib/canvas/objects/BillField";
+import { CellFieldObject } from "@/lib/canvas/objects/BillCellField";
 import { ImagePlaceholderObject } from "@/lib/canvas/objects/ImagePlaceholder";
 import { createId, registerAppProperties } from "@/lib/canvas/fabricSetup";
 import { evenSizes } from "@/lib/template/geometry";
 import { analysePlaceholders } from "@/lib/template/placeholders";
 import type {
   BillTemplate,
+  CellFieldObject as CellFieldObj,
   FieldObject as FieldObj,
   FreehandObject,
   GroupObject,
@@ -342,6 +344,42 @@ function hydrateField(o: FieldObj, zIndex: number): FieldObject {
   return applyCommon(obj, o, zIndex);
 }
 
+/**
+ * A cell field hydrates like a field, plus the binding that makes it an Excel
+ * cell: the box it fills, its inner padding and its vertical alignment. The
+ * canvas shows the tint and the dashed border; the bound box paints itself.
+ */
+function hydrateCellField(o: CellFieldObj, zIndex: number): CellFieldObject {
+  const obj = new CellFieldObject({
+    key: o.key,
+    fieldType: o.fieldType,
+    // The canvas label is the marker the author sees; the template carries the
+    // `{{key}}` text it stands for, and the two are not interchangeable.
+    label: o.text || `{{${o.key}}}`,
+    textColor: o.fill === "transparent" ? "#047857" : o.fill,
+    fontFamily: o.fontFamily,
+    fontSize: o.fontSize,
+    fontWeight: o.fontWeight,
+    fontStyle: o.fontStyle,
+    textAlign: o.textAlign,
+    textVerticalAlign: o.textVerticalAlign,
+    padding: o.padding,
+    wrap: o.wrap,
+    containerId: o.containerId,
+  });
+  obj.set({
+    left: o.x,
+    top: o.y,
+    width: o.width,
+    height: o.height,
+    angle: o.rotation,
+    opacity: o.opacity,
+    visible: o.visible,
+    ...(o.expansion ? { expansion: o.expansion } : {}),
+  } as never);
+  return applyCommon(obj, o, zIndex);
+}
+
 function hydrateBillPart(
   o: TemplateBillPart,
   zIndex: number,
@@ -406,6 +444,8 @@ export function hydrateObject(
       return hydrateImagePlaceholder(o, zIndex, images);
     case "field":
       return hydrateField(o, zIndex);
+    case "cell-field":
+      return hydrateCellField(o as unknown as CellFieldObj, zIndex);
     case "bill-part":
       return hydrateBillPart(o as TemplateBillPart, zIndex, images);
     case "group":

@@ -106,7 +106,7 @@ export interface ManifestField {
   key: string;
   label: string;
   type: ManifestFieldType;
-  source: "text" | "table" | "image-placeholder" | "field";
+  source: "text" | "table" | "image-placeholder" | "field" | "cell-field";
   objectName: string;
   maxLength?: number;
   required?: boolean;

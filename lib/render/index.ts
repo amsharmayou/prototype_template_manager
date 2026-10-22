@@ -373,7 +373,30 @@ export function renderHtml(
 
   const placeholders = options.placeholders ?? "hide";
   const bodies = pagination.pages.map((slice) => {
-    const ordered = slice.objects
+    // A cell field paints inside the box it is bound to: geometry comes from
+    // the container on the same sheet, minus the cell field's inner padding.
+    // An unfindable container leaves the slot at its authored box.
+    const resolvedCellFields = slice.objects.map((o) => {
+      if (o.type !== "cell-field") return o;
+      const cid = (o as { containerId?: string | null }).containerId;
+      if (typeof cid !== "string" || cid.length === 0) return o;
+      const container = slice.objects.find((c) => c.id === cid && (c.type === "rect" || c.type === "rounded-rect"));
+      if (container === undefined) return o;
+      const padding = typeof o.padding === "number" && o.padding > 0 ? o.padding : 6;
+      const policy = (container as { container?: { padding?: { top?: number; right?: number; bottom?: number; left?: number } } }).container;
+      const pt = typeof policy?.padding?.top === "number" ? policy.padding.top : padding;
+      const pr = typeof policy?.padding?.right === "number" ? policy.padding.right : padding;
+      const pb = typeof policy?.padding?.bottom === "number" ? policy.padding.bottom : padding;
+      const pl = typeof policy?.padding?.left === "number" ? policy.padding.left : padding;
+      return {
+        ...o,
+        x: container.x + pl,
+        y: container.y + pt,
+        width: Math.max(0, container.width - pl - pr),
+        height: Math.max(0, container.height - pt - pb),
+      };
+    });
+    const ordered = resolvedCellFields
       .map((o, i) => ({ o, i }))
       .sort((a, b) => a.o.zIndex - b.o.zIndex || a.i - b.i);
     return ordered

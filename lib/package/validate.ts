@@ -46,7 +46,7 @@ const FIELD_TYPES = new Set([
   "repeating",
 ]);
 
-const FIELD_SOURCES = new Set(["text", "table", "image-placeholder", "field"]);
+const FIELD_SOURCES = new Set(["text", "table", "image-placeholder", "field", "cell-field"]);
 
 const ASSET_ROLES = new Set(["bill-part", "image-placeholder"]);
 

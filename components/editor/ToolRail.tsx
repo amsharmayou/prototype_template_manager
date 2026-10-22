@@ -20,6 +20,7 @@ import {
   Table,
   Triangle,
   Type,
+  Grid2x2,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/Controls";
@@ -45,6 +46,7 @@ const TOOL_ICONS: Record<ToolId, ReactNode> = {
   "image-placeholder": <ImageIcon aria-hidden className={iconClass} />,
   "bill-part": <Scissors aria-hidden className={iconClass} />,
   field: <Braces aria-hidden className={iconClass} />,
+  "cell-field": <Grid2x2 aria-hidden className={iconClass} />,
   eyedropper: <Pipette aria-hidden className={iconClass} />,
 };
 
@@ -58,7 +60,7 @@ const GROUPS: Array<{ title: string; tools: ToolId[] }> = [
     tools: ["line", "hr", "vr", "rect", "rounded-rect", "ellipse", "polygon", "freehand"],
   },
   { title: "Structure", tools: ["guide-h", "guide-v", "table"] },
-  { title: "Content", tools: ["text", "image-placeholder", "bill-part", "field"] },
+  { title: "Content", tools: ["text", "image-placeholder", "bill-part", "field", "cell-field"] },
   { title: "Tools", tools: ["select", "eyedropper"] },
 ];
 
@@ -73,6 +75,7 @@ const SHORTCUTS: Partial<Record<ToolId, string>> = {
   "image-placeholder": "I",
   "bill-part": "B",
   field: "F",
+  "cell-field": "X",
   hr: "H",
   freehand: "E",
   eyedropper: "K",

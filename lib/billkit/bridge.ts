@@ -139,14 +139,36 @@ export function measureBridge(
   const requests: MeasurementRequest[] = [];
 
   for (const o of filled.objects) {
-    if (o.type !== "text" && o.type !== "field") continue;
+    if (o.type !== "text" && o.type !== "field" && o.type !== "cell-field") continue;
     const policy = (o as { expansion?: unknown }).expansion;
-    if (typeof policy !== "object" || policy === null) continue;
+    if (typeof policy !== "object" || policy === null) {
+      // A cell field bound to a resolving container still measures: the host
+      // needs its wrapped height even when the slot itself carries no policy.
+      if (o.type !== "cell-field") continue;
+    }
 
     const y = (policy as { y?: { strategy?: unknown } }).y;
     // A text object that does not wrap still needs its natural width, so it is
-    // still asked about - just about a different thing.
-    const wraps = o.type === "field" || y?.strategy === "wrap";
+    // still asked about - just about a different thing. A cell field wraps by
+    // default; `wrap: false` opts into one line and clips at the box.
+    const wraps = o.type === "cell-field" ? (o as { wrap?: boolean }).wrap !== false : o.type === "field" || y?.strategy === "wrap";
+    // Measured against the box's inner area: a bound cell field's width is
+    // the container's width minus the container's own padding, because that
+    // is what the renderer will wrap against.
+    let measureWidth = o.width;
+    if (o.type === "cell-field") {
+      const cid = (o as { containerId?: string | null }).containerId;
+      if (typeof cid === "string" && cid.length > 0) {
+        const container = filled.objects.find(
+          (c) => c.id === cid && (c.type === "rect" || c.type === "rounded-rect"),
+        );
+        if (container !== undefined) {
+          const pad = (o as { padding?: number }).padding;
+          const p = typeof pad === "number" && pad > 0 ? pad : 6;
+          measureWidth = Math.max(0, container.width - p * 2);
+        }
+      }
+    }
 
     requests.push({
       id: o.id,
@@ -158,7 +180,7 @@ export function measureBridge(
       fontStyle: o.fontStyle,
       lineHeight: o.lineHeight,
       charSpacing: o.charSpacing,
-      width: o.width,
+      width: measureWidth,
       wrap: wraps,
     });
   }
